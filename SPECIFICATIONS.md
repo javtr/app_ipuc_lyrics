@@ -142,9 +142,9 @@ interface SedeSongOverride {
 }
 ```
 
-**Regla de Resolución:**
+**Regla de Resolución y Resiliencia:**
 - Si el usuario está en el perfil de su sede y existe un registro en `overrides`, la app muestra la versión local con la insignia `[Versión Sede]`.
-- Si no existe override, muestra la versión del catálogo general intacta.
+- Si no existe override o si se abre un repertorio de otra sede sin conexión, el sistema aplica **fallback instantáneo al Catálogo General** (ver Sección 5.3). Jamás se muestra un error de canción no encontrada.
 
 ---
 
@@ -163,6 +163,23 @@ interface SedeSongOverride {
 - Para respaldar todo el cancionero de una sede o transferirlo entre dispositivos sin internet:
   - Botón **"Descargar Respaldo"**: Genera un archivo `app_lyrics_respaldo_YYYY-MM-DD.json`.
   - Botón **"Restaurar Respaldo"**: Carga el archivo y realiza un *upsert* masivo en IndexedDB.
+
+### 5.3 Estrategia de Sincronización Híbrida y Fallback Seguro entre Sedes
+Para resolver el flujo donde músicos interactúan con canciones o repertorios de distintas sedes sin saturar el almacenamiento del dispositivo ni requerir servidores complejos:
+
+1. **Descarga Base por Perfil:**
+   - Al instalar la app o seleccionar una congregación en el Navbar, el dispositivo descarga el **Catálogo General Nacional** (rama `main`) y las **variantes específicas de esa sede** (`overrides` de la rama `sede/{nombre_sede}`).
+2. **Sincronización On-Demand al Compartir Repertorios:**
+   - Todo repertorio compartido lleva asociada la sede de origen (`sedeId`).
+   - Cuando un músico abre un enlace de WhatsApp con conexión, la app verifica si el repertorio contiene variantes de esa otra sede que no estén en su `IndexedDB`. De haberlas, las descarga en segundo plano en milisegundos y las guarda localmente.
+3. **Mecanismo de Resiliencia / Fallback Seguro (Cero Pantallas Vacías):**
+   - Si el músico abre el repertorio de otra sede estando sin señal (en el templo o en modo avión):
+     - La app **hace fallback inmediato al Catálogo General** para cada canción cuya variante de sede externa no esté descargada.
+     - Se despliega un aviso discreto:  
+       > *"Mostrando versión base del catálogo general (la adaptación de [Sede] requiere conexión para sincronizarse)."*
+     - De esta forma, el músico **siempre tiene acordes y letra en pantalla y puede tocar sin interrupciones**.
+4. **Persistencia Acumulativa:**
+   - Toda variante de sede externa sincronizada se almacena en el `IndexedDB` local (`db.overrides`), asegurando que para futuros ensayos o cultos funcione 100% desconectada.
 
 ---
 
