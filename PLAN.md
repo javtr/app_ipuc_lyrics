@@ -1,48 +1,61 @@
-# Plan de Desarrollo Activo: Centrado Visual del Modal de Sedes
+# Plan de Desarrollo Activo: Editor Visual de Canciones y Asistente ChordPro
 
 > **Estado:** EJECUTADO (100% Implementado y Validado)
 
 ---
 
 ## 1. Objetivo Técnico
-Modificar el posicionamiento del modal de selección de sede en **[src/components/SedeSelector.tsx](file:///f:/Desarrollo/app_lyrics/src/components/SedeSelector.tsx)** para que se muestre **completamente centrado** (vertical y horizontalmente) tanto en dispositivos móviles como en pantallas de escritorio, eliminando el comportamiento de panel inferior (*Bottom Sheet*).
+Implementar el **Editor Visual de Canciones y Asistente ChordPro** que permita a los líderes y músicos:
+1. **Crear nuevas canciones** desde cero con metadatos completos (Título, Artista, Tono original, BPM, Compás, Tags) e incorporarlas al catálogo local (`db.songs`).
+2. **Editar letras y acordes existentes**, permitiendo guardar como actualización general o como versión personalizada de sede (`db.overrides`).
+3. **Asistente Táctil de Acordes:** Barra de botones con acordes comunes (`[C]`, `[D]`, `[G]`, `[Em]`, `[Am]`, `[F]`, etc.) y atajos de secciones (`+ Verso`, `+ Coro`, `+ Puente`) para insertar en el cursor sin usar corchetes manualmente en celulares.
+4. **Previsualización en Vivo (*Live Preview*):**
+   - **Escritorio:** Vista dividida lado a lado (*Split-View*).
+   - **Móvil:** Pestañas *Editar* / *Previsualizar*.
+5. **Servicio Serializador Bidireccional:** Conversión fluida entre texto ChordPro plano y la estructura tipada `SongSection[]`.
 
 ---
 
-## 2. Flujo Lógico y Estilos de Posicionamiento
+## 2. Flujo Lógico y Pseudocódigo
 
+### 2.1 Parser Bidireccional (`src/services/chordSerializer.ts`)
 ```text
-CONTENEDOR EXTERNO (Overlay):
-  - fixed inset-0 z-50
-  - flex items-center justify-center (Centrado vertical y horizontal en todas las pantallas)
-  - p-4 (Margen de seguridad respecto a los bordes de la pantalla móvil)
-  - bg-black/75 backdrop-blur-sm
+FUNCIÓN serializeSectionsToText(sections):
+  Devuelve string formateado:
+  {verse: Verso 1}
+  [G]Sublime gracia del [C]Señor[G]
+  Que a un [Em]infeliz sal[D]vó
 
-CONTENEDOR INTERNO (Tarjeta Modal):
-  - w-full max-w-sm (Ancho responsivo que se adapta a teléfonos sin desbordar)
-  - rounded-2xl (Bordes redondeados completos en todas las esquinas)
-  - border border-slate-700 bg-slate-900 shadow-2xl
-  - max-h-[85vh] flex flex-col (Scroll interno suave si la lista de sedes crece)
+  {chorus: Coro}
+  [G]¡Aleluya! [C]¡Ale[G]luya!
+
+FUNCIÓN parseTextToSections(rawText):
+  Descompone el texto por directivas {tipo: Etiqueta} o infiere secciones por párrafos.
+  Genera arreglo SongSection[] tipado y limpio.
+```
+
+### 2.2 Asistente de Cursor
+```text
+FUNCIÓN insertTagAtCursor(textarea, tag):
+  Inserta `tag` en la posición actual de selección y reubica el cursor inmediatamente después.
 ```
 
 ---
 
 ## 3. Matriz de Cambios y Ubicaciones Exactas
 
-| Archivo | Componente | Ubicación y Modificación Exacta |
+| Archivo | Módulo | Propósito y Ubicación Exacta |
 | :--- | :--- | :--- |
-| `src/components/SedeSelector.tsx` | `SedeSelector` | **Líneas 91-98:**<br>Reemplazar `items-end sm:items-center sm:justify-center p-0 sm:p-4` por `items-center justify-center p-4`.<br>Reemplazar `w-full sm:w-96 rounded-t-3xl sm:rounded-2xl` por `w-full max-w-sm rounded-2xl`. |
+| `src/services/chordSerializer.ts` | Nuevo Servicio | Funciones puras `serializeSectionsToText()` y `parseTextToSections()`. |
+| `src/components/SongEditorModal.tsx` | Nuevo Componente | Modal centrado (con React Portal) para creación/edición, barra de acordes y preview reactivo. |
+| `src/components/MusicianView.tsx` | Componente | Añadir botón "Editar letra y acordes" que abre el `SongEditorModal`. |
+| `src/App.tsx` | Componente Raíz | Añadir botón "+ Nueva Canción" en la lista del cancionero y conectar el estado del editor. |
+| `tests/chordSerializer.test.ts` | Pruebas Unitarias | Validación de ida y vuelta (round-trip) entre texto y `SongSection[]`. |
 
 ---
 
 ## 4. Plan de Verificación
 
-1. **Chequeo de Tipos TypeScript:**
-   - Comando: `npx tsc --noEmit`
-   - Criterio: 0 errores.
-2. **Pruebas Unitarias:**
-   - Comando: `npm test`
-   - Criterio: 14/14 tests aprobados.
-3. **Verificación Visual:**
-   - Abrir en vista móvil (iPhone SE / Galaxy S20).
-   - Tocar el botón de sede: el modal debe aparecer en el **centro geométrico exacto de la pantalla**, con bordes redondeados y fondo oscurecido uniforme.
+1. **Pruebas Unitarias:** `npm test` (validar serializador y tests existentes).
+2. **Chequeo de Tipos:** `npx tsc --noEmit` (0 errores).
+3. **Build de Producción:** `npm run build` (empaquetado PWA limpio).

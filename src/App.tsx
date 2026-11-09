@@ -6,7 +6,8 @@ import {
   Search, 
   Sparkles, 
   Flag,
-  Share2
+  Share2,
+  Plus
 } from 'lucide-react';
 import { db, initializeDatabase } from './db';
 import { BaseSong } from './types';
@@ -18,6 +19,7 @@ import { ProjectionView } from './components/ProjectionView';
 import { SetlistManager } from './components/SetlistManager';
 import { CorrectionModal } from './components/CorrectionModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
+import { SongEditorModal } from './components/SongEditorModal';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<'catalog' | 'setlists'>('catalog');
@@ -30,6 +32,8 @@ export function App() {
   const [correctionSong, setCorrectionSong] = useState<BaseSong | null>(null);
   const [importNotification, setImportNotification] = useState<string | null>(null);
   const [isSedeModalOpenOnMobile, setIsSedeModalOpenOnMobile] = useState<boolean>(false);
+  const [isEditorOpen, setIsEditorOpen] = useState<boolean>(false);
+  const [songToEdit, setSongToEdit] = useState<BaseSong | null>(null);
 
   // Inicializar base de datos IndexedDB en primer montaje
   useEffect(() => {
@@ -165,16 +169,29 @@ export function App() {
             <div className={`space-y-3 sm:space-y-4 lg:col-span-4 ${
               mobileView === 'detail' ? 'hidden lg:block' : 'block'
             }`}>
-              {/* Barra de Búsqueda */}
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Buscar canción, artista o tag..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 sm:py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
-                />
+              {/* Barra de Búsqueda y Botón Nueva Canción */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Buscar canción, artista o tag..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 sm:py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    setSongToEdit(null);
+                    setIsEditorOpen(true);
+                  }}
+                  title="Crear nueva canción"
+                  className="flex items-center gap-1 px-3 py-2 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shrink-0 shadow-sm transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span className="hidden xs:inline">Nueva</span>
+                </button>
               </div>
 
               {/* Lista de Canciones */}
@@ -265,6 +282,12 @@ export function App() {
                   onEnterProjection={() => setIsProjectionMode(true)}
                   onSongUpdated={() => {}}
                   onBackToCatalog={() => setMobileView('list')}
+                  onEditFullSong={() => {
+                    if (activeBaseSong) {
+                      setSongToEdit(activeBaseSong);
+                      setIsEditorOpen(true);
+                    }
+                  }}
                 />
               ) : (
                 <div className="text-center py-20 text-slate-500 text-sm">
@@ -316,6 +339,20 @@ export function App() {
           song={correctionSong}
           isOpen={!!correctionSong}
           onClose={() => setCorrectionSong(null)}
+        />
+      )}
+
+      {/* Modal de Edición y Creación de Canciones */}
+      {isEditorOpen && (
+        <SongEditorModal
+          isOpen={isEditorOpen}
+          initialSong={songToEdit}
+          activeSedeId={activeSedeId}
+          onClose={() => setIsEditorOpen(false)}
+          onSave={savedSong => {
+            setSelectedSongId(savedSong.id);
+            setMobileView('detail');
+          }}
         />
       )}
     </div>
