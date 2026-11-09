@@ -1,0 +1,298 @@
+import { useState, useEffect } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { 
+  BookOpen, 
+  ListMusic, 
+  Search, 
+  Sparkles, 
+  Flag,
+  Share2
+} from 'lucide-react';
+import { db, initializeDatabase } from './db';
+import { BaseSong } from './types';
+import { resolveSongForDisplay } from './services/songResolver';
+import { decompressSetlist } from './services/urlSharing';
+import { SedeSelector } from './components/SedeSelector';
+import { MusicianView } from './components/MusicianView';
+import { ProjectionView } from './components/ProjectionView';
+import { SetlistManager } from './components/SetlistManager';
+import { CorrectionModal } from './components/CorrectionModal';
+
+export function App() {
+  const [activeTab, setActiveTab] = useState<'catalog' | 'setlists'>('catalog');
+  const [activeSedeId, setActiveSedeId] = useState<string>('general');
+  const [selectedSongId, setSelectedSongId] = useState<string>('sublime-gracia');
+  const [isProjectionMode, setIsProjectionMode] = useState<boolean>(false);
+  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [correctionSong, setCorrectionSong] = useState<BaseSong | null>(null);
+  const [importNotification, setImportNotification] = useState<string | null>(null);
+
+  // Inicializar base de datos IndexedDB en primer montaje
+  useEffect(() => {
+    initializeDatabase().catch(err => console.error('Error al iniciar BD local:', err));
+
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Detección e importación de repertorios compartidos vía URL hash (#repertorio=...)
+    const checkSharedUrl = async () => {
+      if (window.location.hash.startsWith('#repertorio=')) {
+        const compressed = window.location.hash.replace('#repertorio=', '');
+        const importedSetlist = decompressSetlist(compressed);
+        if (importedSetlist) {
+          await db.setlists.put(importedSetlist);
+          setActiveTab('setlists');
+          setImportNotification(`¡Repertorio "${importedSetlist.name}" importado exitosamente!`);
+          window.history.replaceState(null, '', window.location.pathname);
+          setTimeout(() => setImportNotification(null), 5000);
+        }
+      }
+    };
+
+    checkSharedUrl();
+    window.addEventListener('hashchange', checkSharedUrl);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('hashchange', checkSharedUrl);
+    };
+  }, []);
+
+  // Consultas reactivas a IndexedDB con Dexie
+  const songs = useLiveQuery(() => db.songs.toArray()) || [];
+  const overrides = useLiveQuery(() => db.overrides.toArray()) || [];
+  const setlists = useLiveQuery(() => db.setlists.toArray()) || [];
+
+  // Filtrado de canciones por búsqueda
+  const filteredSongs = songs.filter(song => {
+    const q = searchQuery.toLowerCase();
+    return (
+      song.title.toLowerCase().includes(q) ||
+      (song.artist && song.artist.toLowerCase().includes(q)) ||
+      (song.tags && song.tags.some(t => t.toLowerCase().includes(q)))
+    );
+  });
+
+  // Canción activa resuelta según sede seleccionada
+  const activeBaseSong = songs.find(s => s.id === selectedSongId) || songs[0];
+  const activeDisplaySong = activeBaseSong
+    ? resolveSongForDisplay(activeBaseSong, activeSedeId, overrides)
+    : null;
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+      {/* Barra de Notificación de Importación */}
+      {importNotification && (
+        <div className="bg-emerald-600 text-white text-xs sm:text-sm font-semibold py-2.5 px-4 text-center shadow-lg flex items-center justify-center gap-2">
+          <Share2 className="w-4 h-4" />
+          <span>{importNotification}</span>
+        </div>
+      )}
+
+      {/* Barra de Navegación Superior */}
+      <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+          {/* Logo y Nombre */}
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-950">
+              <BookOpen className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <span className="font-extrabold text-base sm:text-lg text-white tracking-tight flex items-center gap-1.5">
+                App Lyrics
+              </span>
+              <span className="hidden sm:block text-[10px] text-slate-400 font-medium">
+                Alabanza & Medios Audiovisuales
+              </span>
+            </div>
+          </div>
+
+          {/* Navegación por pestañas y selector de sede */}
+          <div className="flex items-center gap-2 sm:gap-4">
+            <nav className="flex items-center p-1 bg-slate-900 border border-slate-800 rounded-xl">
+              <button
+                onClick={() => setActiveTab('catalog')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  activeTab === 'catalog'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>Cancionero</span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('setlists')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  activeTab === 'setlists'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <ListMusic className="w-3.5 h-3.5" />
+                <span>Repertorios</span>
+              </button>
+            </nav>
+
+            {/* Selector de Sede */}
+            <SedeSelector
+              activeSedeId={activeSedeId}
+              onSelectSede={setActiveSedeId}
+              isOnline={isOnline}
+            />
+          </div>
+        </div>
+      </header>
+
+      {/* Contenido Principal */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
+        {activeTab === 'catalog' ? (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Columna Izquierda: Catálogo y Búsqueda */}
+            <div className="lg:col-span-4 space-y-4">
+              {/* Barra de Búsqueda */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Buscar canción, artista o tag..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                />
+              </div>
+
+              {/* Lista de Canciones */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-2 space-y-1 max-h-[calc(100vh-250px)] overflow-y-auto">
+                {filteredSongs.map(song => {
+                  const hasLocalOverride = overrides.some(
+                    o => o.baseSongId === song.id && o.sedeId === activeSedeId
+                  );
+                  const isSelected = song.id === selectedSongId;
+
+                  return (
+                    <div
+                      key={song.id}
+                      onClick={() => setSelectedSongId(song.id)}
+                      className={`group p-3 rounded-xl cursor-pointer transition-all flex items-center justify-between ${
+                        isSelected
+                          ? 'bg-slate-800 border border-emerald-600/40 text-white shadow-md'
+                          : 'hover:bg-slate-850 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0 pr-2">
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-sm font-semibold truncate">{song.title}</h4>
+                          {hasLocalOverride && (
+                            <span
+                              title="Esta sede tiene una versión local adaptada"
+                              className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"
+                            />
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-400 truncate">
+                          {song.artist || 'Himnario'} • Tono: {song.originalKey}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {hasLocalOverride && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-medium">
+                            Sede
+                          </span>
+                        )}
+
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            setCorrectionSong(song);
+                          }}
+                          title="Reportar corrección en catálogo general"
+                          className="p-1 rounded text-slate-500 hover:text-amber-400 hover:bg-slate-900 transition-colors opacity-0 group-hover:opacity-100"
+                        >
+                          <Flag className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {filteredSongs.length === 0 && (
+                  <div className="py-8 text-center text-xs text-slate-500">
+                    No se encontraron canciones que coincidan.
+                  </div>
+                )}
+              </div>
+
+              {/* Tarjeta Informativa de la Arquitectura */}
+              <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 text-xs text-slate-400 space-y-1.5">
+                <div className="flex items-center gap-1.5 font-semibold text-slate-300">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Arquitectura de Variantes Activa</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-slate-500">
+                  Sede actual: <strong className="text-emerald-400">{activeSedeId}</strong>. Las modificaciones que guardes en el modo músico se guardan como sobreescrituras locales de sede sin alterar el catálogo general nacional.
+                </p>
+              </div>
+            </div>
+
+            {/* Columna Derecha: Vista del Músico para la Canción Seleccionada */}
+            <div className="lg:col-span-8">
+              {activeDisplaySong ? (
+                <MusicianView
+                  song={activeDisplaySong}
+                  activeSedeId={activeSedeId}
+                  onEnterProjection={() => setIsProjectionMode(true)}
+                  onSongUpdated={() => {
+                    // El useLiveQuery actualiza automáticamente la vista
+                  }}
+                />
+              ) : (
+                <div className="text-center py-20 text-slate-500 text-sm">
+                  Selecciona una canción del catálogo para ver sus acordes y letra.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* Vista de Repertorios */
+          <SetlistManager
+            songs={songs}
+            activeSedeId={activeSedeId}
+            savedSetlists={setlists}
+            onSelectSong={songId => {
+              setSelectedSongId(songId);
+              setActiveTab('catalog');
+            }}
+            onSetlistsUpdated={() => {
+              // El useLiveQuery actualiza automáticamente los repertorios
+            }}
+          />
+        )}
+      </main>
+
+      {/* Modo Proyección (Pantalla Completa) */}
+      {isProjectionMode && activeDisplaySong && (
+        <ProjectionView
+          song={activeDisplaySong}
+          onClose={() => setIsProjectionMode(false)}
+        />
+      )}
+
+      {/* Modal de Corrección de Letra General */}
+      {correctionSong && (
+        <CorrectionModal
+          song={correctionSong}
+          isOpen={!!correctionSong}
+          onClose={() => setCorrectionSong(null)}
+        />
+      )}
+    </div>
+  );
+}
