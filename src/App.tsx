@@ -12,21 +12,24 @@ import { db, initializeDatabase } from './db';
 import { BaseSong } from './types';
 import { resolveSongForDisplay } from './services/songResolver';
 import { decompressSetlist } from './services/urlSharing';
-import { SedeSelector } from './components/SedeSelector';
+import { SedeSelector, SEDES_LIST } from './components/SedeSelector';
 import { MusicianView } from './components/MusicianView';
 import { ProjectionView } from './components/ProjectionView';
 import { SetlistManager } from './components/SetlistManager';
 import { CorrectionModal } from './components/CorrectionModal';
+import { MobileBottomNav } from './components/MobileBottomNav';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<'catalog' | 'setlists'>('catalog');
   const [activeSedeId, setActiveSedeId] = useState<string>('general');
   const [selectedSongId, setSelectedSongId] = useState<string>('sublime-gracia');
+  const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
   const [isProjectionMode, setIsProjectionMode] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [correctionSong, setCorrectionSong] = useState<BaseSong | null>(null);
   const [importNotification, setImportNotification] = useState<string | null>(null);
+  const [isSedeModalOpenOnMobile, setIsSedeModalOpenOnMobile] = useState<boolean>(false);
 
   // Inicializar base de datos IndexedDB en primer montaje
   useEffect(() => {
@@ -84,8 +87,10 @@ export function App() {
     ? resolveSongForDisplay(activeBaseSong, activeSedeId, overrides)
     : null;
 
+  const currentSedeProfile = SEDES_LIST.find(s => s.id === activeSedeId) || { name: 'Catálogo' };
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col pb-16 lg:pb-0">
       {/* Barra de Notificación de Importación */}
       {importNotification && (
         <div className="bg-emerald-600 text-white text-xs sm:text-sm font-semibold py-2.5 px-4 text-center shadow-lg flex items-center justify-center gap-2">
@@ -96,14 +101,14 @@ export function App() {
 
       {/* Barra de Navegación Superior */}
       <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-4">
           {/* Logo y Nombre */}
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-950">
-              <BookOpen className="w-5 h-5 text-white" />
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-950 shrink-0">
+              <BookOpen className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
             </div>
             <div>
-              <span className="font-extrabold text-base sm:text-lg text-white tracking-tight flex items-center gap-1.5">
+              <span className="font-extrabold text-sm sm:text-lg text-white tracking-tight flex items-center gap-1.5">
                 App Lyrics
               </span>
               <span className="hidden sm:block text-[10px] text-slate-400 font-medium">
@@ -112,9 +117,9 @@ export function App() {
             </div>
           </div>
 
-          {/* Navegación por pestañas y selector de sede */}
+          {/* Navegación por pestañas (Desktop) y selector de sede */}
           <div className="flex items-center gap-2 sm:gap-4">
-            <nav className="flex items-center p-1 bg-slate-900 border border-slate-800 rounded-xl">
+            <nav className="hidden lg:flex items-center p-1 bg-slate-900 border border-slate-800 rounded-xl">
               <button
                 onClick={() => setActiveTab('catalog')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
@@ -145,17 +150,21 @@ export function App() {
               activeSedeId={activeSedeId}
               onSelectSede={setActiveSedeId}
               isOnline={isOnline}
+              isOpenControlled={isSedeModalOpenOnMobile ? true : undefined}
+              onCloseControlled={() => setIsSedeModalOpenOnMobile(false)}
             />
           </div>
         </div>
       </header>
 
       {/* Contenido Principal */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6">
         {activeTab === 'catalog' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:grid lg:grid-cols-12 lg:gap-6">
             {/* Columna Izquierda: Catálogo y Búsqueda */}
-            <div className="lg:col-span-4 space-y-4">
+            <div className={`space-y-3 sm:space-y-4 lg:col-span-4 ${
+              mobileView === 'detail' ? 'hidden lg:block' : 'block'
+            }`}>
               {/* Barra de Búsqueda */}
               <div className="relative">
                 <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -164,12 +173,12 @@ export function App() {
                   placeholder="Buscar canción, artista o tag..."
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full pl-10 pr-4 py-2 sm:py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
                 />
               </div>
 
               {/* Lista de Canciones */}
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-2 space-y-1 max-h-[calc(100vh-250px)] overflow-y-auto">
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-1.5 sm:p-2 space-y-1 max-h-[calc(100vh-180px)] lg:max-h-[calc(100vh-250px)] overflow-y-auto">
                 {filteredSongs.map(song => {
                   const hasLocalOverride = overrides.some(
                     o => o.baseSongId === song.id && o.sedeId === activeSedeId
@@ -179,8 +188,11 @@ export function App() {
                   return (
                     <div
                       key={song.id}
-                      onClick={() => setSelectedSongId(song.id)}
-                      className={`group p-3 rounded-xl cursor-pointer transition-all flex items-center justify-between ${
+                      onClick={() => {
+                        setSelectedSongId(song.id);
+                        setMobileView('detail');
+                      }}
+                      className={`group p-3 rounded-xl cursor-pointer transition-all flex items-center justify-between active:scale-[0.99] ${
                         isSelected
                           ? 'bg-slate-800 border border-emerald-600/40 text-white shadow-md'
                           : 'hover:bg-slate-850 text-slate-300 hover:text-white'
@@ -214,7 +226,7 @@ export function App() {
                             setCorrectionSong(song);
                           }}
                           title="Reportar corrección en catálogo general"
-                          className="p-1 rounded text-slate-500 hover:text-amber-400 hover:bg-slate-900 transition-colors opacity-0 group-hover:opacity-100"
+                          className="p-1 rounded text-slate-500 hover:text-amber-400 hover:bg-slate-900 transition-colors opacity-70 sm:opacity-0 sm:group-hover:opacity-100"
                         >
                           <Flag className="w-3.5 h-3.5" />
                         </button>
@@ -231,27 +243,28 @@ export function App() {
               </div>
 
               {/* Tarjeta Informativa de la Arquitectura */}
-              <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 text-xs text-slate-400 space-y-1.5">
+              <div className="p-3 sm:p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 text-xs text-slate-400 space-y-1 hidden sm:block">
                 <div className="flex items-center gap-1.5 font-semibold text-slate-300">
                   <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
                   <span>Arquitectura de Variantes Activa</span>
                 </div>
                 <p className="text-[11px] leading-relaxed text-slate-500">
-                  Sede actual: <strong className="text-emerald-400">{activeSedeId}</strong>. Las modificaciones que guardes en el modo músico se guardan como sobreescrituras locales de sede sin alterar el catálogo general nacional.
+                  Sede actual: <strong className="text-emerald-400">{activeSedeId}</strong>. Las personalizaciones en el atril se guardan localmente para tu sede sin modificar el catálogo general.
                 </p>
               </div>
             </div>
 
             {/* Columna Derecha: Vista del Músico para la Canción Seleccionada */}
-            <div className="lg:col-span-8">
+            <div className={`lg:col-span-8 ${
+              mobileView === 'list' ? 'hidden lg:block' : 'block'
+            }`}>
               {activeDisplaySong ? (
                 <MusicianView
                   song={activeDisplaySong}
                   activeSedeId={activeSedeId}
                   onEnterProjection={() => setIsProjectionMode(true)}
-                  onSongUpdated={() => {
-                    // El useLiveQuery actualiza automáticamente la vista
-                  }}
+                  onSongUpdated={() => {}}
+                  onBackToCatalog={() => setMobileView('list')}
                 />
               ) : (
                 <div className="text-center py-20 text-slate-500 text-sm">
@@ -269,13 +282,25 @@ export function App() {
             onSelectSong={songId => {
               setSelectedSongId(songId);
               setActiveTab('catalog');
+              setMobileView('detail');
             }}
-            onSetlistsUpdated={() => {
-              // El useLiveQuery actualiza automáticamente los repertorios
-            }}
+            onSetlistsUpdated={() => {}}
           />
         )}
       </main>
+
+      {/* Barra de Navegación Inferior Nativa para Móviles */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        onSelectTab={tab => {
+          setActiveTab(tab);
+          if (tab === 'catalog') {
+            setMobileView('list');
+          }
+        }}
+        onOpenSedeSelector={() => setIsSedeModalOpenOnMobile(true)}
+        activeSedeName={currentSedeProfile.name.replace('Catálogo ', '')}
+      />
 
       {/* Modo Proyección (Pantalla Completa) */}
       {isProjectionMode && activeDisplaySong && (
