@@ -9,7 +9,8 @@ import {
   ArrowUp, 
   ArrowDown, 
   Calendar,
-  ExternalLink
+  ExternalLink,
+  HardDrive
 } from 'lucide-react';
 import { BaseSong, Setlist, SetlistItem } from '../types';
 import { generateShareableUrl, generateWhatsAppLink } from '../services/urlSharing';
@@ -22,6 +23,7 @@ interface SetlistManagerProps {
   isMusicianMode?: boolean;
   onSelectSong: (songId: string) => void;
   onSetlistsUpdated: () => void;
+  onOpenBackup?: () => void;
 }
 
 export const SetlistManager: React.FC<SetlistManagerProps> = ({
@@ -30,7 +32,8 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
   savedSetlists,
   isMusicianMode = false,
   onSelectSong,
-  onSetlistsUpdated
+  onSetlistsUpdated,
+  onOpenBackup
 }) => {
   const [activeSetlistId, setActiveSetlistId] = useState<string | null>(
     savedSetlists[0]?.id || null

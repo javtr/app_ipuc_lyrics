@@ -1,104 +1,77 @@
-# Plan de Desarrollo Activo: Estado Global "Modo Músico" y Corrección de Scroll en Editor Móvil
+# Plan de Desarrollo: Reubicación de Copia de Seguridad a Repertorios y Optimización del Navbar Móvil
 
-> **Estado:** EJECUTADO (100% Implementado y Validado)
-
----
-
-## 1. Objetivo Técnico y Causa Raíz
-
-### 1.1 Diagnóstico del Problema en Móvil (`SongEditorModal.tsx`)
-En dispositivos móviles, el modal de edición de canciones no permitía ver la letra ni desplazarse hacia abajo debido a que múltiples contenedores anidados tenían la propiedad `overflow-hidden` y alturas fijas (`max-h-[95vh]`, `flex-1 overflow-hidden`). La cabecera de metadatos (título, artista, tono, compás) sumada a la barra de acordes rápidos ocupaba todo el alto disponible de la pantalla, dejando la caja de texto de la letra aplastada o fuera del área visible sin posibilidad de hacer scroll.
-
-### 1.2 Estado Global de "Modo Músico" en el Navbar
-Actualmente la app asume que cualquiera que edite canciones es un músico que entiende de cifrado. Siguiendo la visión del producto en **[SPECIFICATIONS.md](file:///f:/Desarrollo/app_lyrics/SPECIFICATIONS.md)**, la inmensa mayoría de los usuarios y líderes son miembros que solo necesitan leer y editar la letra lírica de las canciones.
-
-Por tanto, se implementará un **conmutador global en el Navbar superior**:
-1. **`isMusicianMode === false` (Modo Normal / Congregación - Por defecto):**
-   - **En el visor:** Muestra exclusivamente `ReaderView` (letra limpia, coro destacado, auto-scroll). No hay botones para transponer ni ver acordes.
-   - **En el editor:** Se ocultan todos los conceptos de teoría musical (Tono, BPM, Compás, barra de acordes rápidos). Solo permite editar título, artista y el texto de las estrofas limpias.
-   - **En repertorios:** Oculta los selectores y columnas de tonalidad musical.
-   - **En el cancionero:** Oculta las etiquetas de tono en las tarjetas de canciones.
-2. **`isMusicianMode === true` (Modo Músico Activo):**
-   - Habilita acordes ChordPro, transposición en tiempo real, atril con WakeLock, barra táctil de acordes en el editor y selección de tono por canción en repertorios.
-3. **Persistencia:** Guardado en `localStorage` (`app_lyrics_musician_mode: 'true' | 'false'`), iniciando siempre por defecto en `false`.
+> **Estado:** PENDIENTE DE REVISIÓN Y APROBACIÓN (Fase 1: Modo Solo Lectura)
 
 ---
 
-## 2. Flujo Lógico y Pseudocódigo
+## 1. Objetivo Técnico y Justificación Arquitectónica
 
-### 2.1 Estado Global en `src/App.tsx`
+### 1.1 Justificación
+En la discusión de diseño se estableció que:
+1. El **Catálogo General de Canciones** pertenece y se versiona en el repositorio Git (GitHub / Cloudflare Pages).
+2. Los **Repertorios de Culto** y las **Variantes de Sede** son los datos que realmente residen en el almacenamiento local del dispositivo (`IndexedDB`).
+3. Ubicar el botón de "Copia de Seguridad" en el Navbar superior generaba ruido visual y sobrecarga en pantallas móviles pequeñas (360px - 390px).
+
+### 1.2 Objetivo
+- **Retirar** el botón de copia de seguridad del Navbar (`<header>`) en `src/App.tsx`.
+- **Reubicarlo** dentro de `src/components/SetlistManager.tsx` en la cabecera de la sección de repertorios, junto a "Nuevo Repertorio".
+- **Garantizar** que el Navbar móvil quede ultra limpio, mostrando únicamente los dos controles críticos de alabanza: el selector de **Sede** y el conmutador de **Modo Músico / Lector**.
+
+---
+
+## 2. Pseudocódigo y Flujo Lógico
+
+### 2.1 En `src/components/SetlistManager.tsx`
 ```text
-ESTADO isMusicianMode = (localStorage.getItem('app_lyrics_musician_mode') == 'true') // Default: false
+PROPS DE SETLISTMANAGER:
+  - Añadir prop opcional: onOpenBackup?: () => void
 
-FUNCIÓN toggleMusicianMode():
-  nuevoEstado = !isMusicianMode
-  isMusicianMode = nuevoEstado
-  localStorage.setItem('app_lyrics_musician_mode', nuevoEstado.toString())
+EN LA CABECERA DE REPERTORIOS:
+  - Contenedor de acciones:
+    [ Botón: "Copia de Seguridad" (Icono HardDrive) -> Ejecuta onOpenBackup() ]
+    [ Botón: "+ Nuevo Repertorio" (Icono Plus) -> Abre modal de nuevo repertorio ]
+```
 
+### 2.2 En `src/App.tsx`
+```text
 EN NAVBAR (<header>):
-  RENDERIZAR botón conmutador:
-    - Inactivo: "📖 Modo Lector" (Gris / Neutro)
-    - Activo: "🎵 Modo Músico" (Borde e icono Esmeralda activo)
-```
+  - Eliminar el <button onClick={() => setIsBackupModalOpen(true)}> del header
+  - Espacio visual optimizado para:
+    [ Logo + App Lyrics ] --------- [ Selector Sede ] [ Modo Músico/Lector ]
 
-### 2.2 Reestructuración del Scroll en `src/components/SongEditorModal.tsx`
-```text
-MODAL CONTAINER:
-  - fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4
-  - max-h-[92vh] flex flex-col bg-slate-900 rounded-2xl overflow-hidden
-
-CUERPO DEL MODAL (ÚNICO SCROLL FLUIDO):
-  - flex-1 overflow-y-auto p-4 space-y-4
-  
-  SI isMusicianMode:
-    - Mostrar campos: Título, Artista, Tono, BPM, Compás
-    - Mostrar Barra de Inserción de Acordes [G], [C], [D]...
-    - Textarea con acordes y live preview
-  SINO:
-    - Mostrar solo campos: Título, Artista
-    - Ocultar Barra de Acordes y selectores de Tono
-    - Textarea enfocado únicamente en la letra lírica limpia
-    - Atajos de sección: + Verso, + Coro
-
-FOOTER:
-  - shrink-0 border-t p-3 (Botones Cancelar y Guardar siempre accesibles)
-```
-
-### 2.3 Filtrado Condicional en `src/components/SetlistManager.tsx`
-```text
-SI isMusicianMode == true:
-  Mostrar selector de tono y badge "Tono: G" en cada canción
-SINO:
-  Ocultar tono; mostrar solo título, orden y notas
+EN RENDER DE SETLISTMANAGER:
+  - Pasar onOpenBackup={() => setIsBackupModalOpen(true)}
 ```
 
 ---
 
-## 3. Matriz de Cambios y Ubicaciones Exactas
+## 3. Impacto en Componentes
 
-| Archivo | Módulo / Componente | Propósito y Ubicación Exacta |
+| Archivo | Rol | Cambios |
 | :--- | :--- | :--- |
-| `src/App.tsx` | Componente Raíz | 1. Líneas 30-45: Estado `isMusicianMode` persistido en `localStorage`.<br>2. Líneas 140-160: Botón de conmutación `Modo Músico` en el Navbar superior.<br>3. Líneas 270-290: Condicionar `MusicianView` vs `ReaderView` según `isMusicianMode`.<br>4. Líneas 360-380: Pasar `isMusicianMode` al `SongEditorModal` y `SetlistManager`. |
-| `src/components/SongEditorModal.tsx` | Componente | 1. Props: Añadir `isMusicianMode: boolean`.<br>2. Layout: Eliminar bloqueos de `overflow-hidden` y unificar en un contenedor con `overflow-y-auto`.<br>3. Renderizado condicional: Ocultar selectores de tono, BPM, compás y barra de acordes rápidos si `isMusicianMode === false`. |
-| `src/components/SetlistManager.tsx` | Componente | 1. Props: Añadir `isMusicianMode: boolean`.<br>2. Condicionar la visualización de tonos en las canciones del culto. |
-| `src/components/ReaderView.tsx` | Componente | Eliminar el botón interno "Ver Acordes" si el modo músico ahora se gobierna globalmente desde el Navbar superior. |
-| `tests/musicianMode.test.ts` | Suite de Pruebas | Pruebas unitarias para verificar la consistencia del modo lector limpio vs modo músico en el editor y visor. |
+| `src/App.tsx` | Contenedor principal | Retirar botón `HardDrive` del header; conectar prop `onOpenBackup` en `<SetlistManager />`. |
+| `src/components/SetlistManager.tsx` | Gestión de repertorios | Añadir `HardDrive` a los iconos importados; añadir prop `onOpenBackup`; renderizar botón en la barra de herramientas de repertorios. |
+| `tests/backupService.test.ts` | Pruebas | Mantener las pruebas existentes intactas (ya cubren exportación/importación y persistencia). |
 
 ---
 
-## 4. Plan de Verificación
+## 4. Ubicación Exacta de los Cambios
 
-1. **Chequeo de Tipos TypeScript:**
-   - Comando: `npx tsc --noEmit` (0 errores).
-2. **Pruebas Unitarias:**
-   - Comando: `npm test` (Todas las pruebas aprobadas).
-3. **Validación en Móvil (Viewport 375px / 390px):**
-   - **Prueba 1 (Modo Normal por Defecto):**
-     - Abrir la app: el Navbar muestra el botón en modo Lector (apagado).
-     - El cancionero no muestra tonos musicales en las canciones.
-     - Al abrir una canción, se lee la letra limpia sin acordes.
-     - Al tocar "+ Nueva" o "Editar", el modal se despliega: se puede hacer scroll hacia abajo cómodamente, la caja de texto para escribir la letra es grande y accesible, y no aparece ninguna barra de acordes ni selector de tono.
-   - **Prueba 2 (Activación de Modo Músico):**
-     - Tocar el botón "Modo Músico" en el Navbar: se enciende con badge verde esmeralda.
-     - La canción actual muestra inmediatamente los acordes y el atril de músicos con transposición.
-     - Al abrir el editor, se despliegan los controles de tono, BPM y la barra táctil de acordes.
+### 4.1 `src/components/SetlistManager.tsx`
+- **Líneas 1-15:** Importar `HardDrive` desde `lucide-react`.
+- **Líneas 18-25:** Añadir `onOpenBackup?: () => void;` a la interfaz `SetlistManagerProps`.
+- **Líneas 120-135:** En el bloque flex de cabecera de repertorios, agrupar las acciones y colocar el botón de copia de seguridad antes de "Nuevo Repertorio".
+
+### 4.2 `src/App.tsx`
+- **Líneas 175-195:** Eliminar el botón `<button onClick={() => setIsBackupModalOpen(true)}...>` del header.
+- **Líneas 355-375:** Pasar `onOpenBackup={() => setIsBackupModalOpen(true)}` a `<SetlistManager ... />`.
+
+---
+
+## 5. Plan de Verificación
+
+1. **TypeScript Check:** `npx tsc --noEmit` debe dar 0 errores.
+2. **Suite de Pruebas:** `npm test` debe pasar todas las pruebas (8 suites, 24 tests).
+3. **Validación Visual:**
+   - Comprobar en viewport móvil (375px) que el Navbar superior ahora solo muestra Logo, Sede y Modo Músico/Lector con espacio amplio y holgado.
+   - Ir a la pestaña "Repertorios" y validar que el botón "Copia de Seguridad" abre el modal de respaldo y restauración correctamente.
