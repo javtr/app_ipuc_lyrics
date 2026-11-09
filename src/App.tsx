@@ -8,7 +8,6 @@ import {
   Flag,
   Share2,
   Plus,
-  HardDrive,
   Music
 } from 'lucide-react';
 import { db, initializeDatabase } from './db';
@@ -192,15 +191,6 @@ export function App() {
                 {isMusicianMode ? 'Músico' : 'Lector'}
               </span>
             </button>
-
-            {/* Botón de Copia de Seguridad */}
-            <button
-              onClick={() => setIsBackupModalOpen(true)}
-              title="Copia de seguridad y datos"
-              className="p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white transition-colors shrink-0"
-            >
-              <HardDrive className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-            </button>
           </div>
         </div>
       </header>
@@ -364,6 +354,7 @@ export function App() {
             activeSedeId={activeSedeId}
             savedSetlists={setlists}
             isMusicianMode={isMusicianMode}
+            onOpenBackup={() => setIsBackupModalOpen(true)}
             onSelectSong={songId => {
               setSelectedSongId(songId);
               setActiveTab('catalog');

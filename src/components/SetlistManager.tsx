@@ -129,13 +129,27 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
             <h2 className="text-lg font-bold text-white">Repertorios de Culto</h2>
           </div>
 
-          <button
-            onClick={() => setIsCreatingNew(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-semibold text-white transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Nuevo Repertorio</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenBackup && (
+              <button
+                onClick={onOpenBackup}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-700 rounded-xl text-xs font-semibold text-slate-300 transition-colors"
+                title="Respaldar o restaurar listas de culto en este dispositivo"
+              >
+                <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Copia de Seguridad</span>
+                <span className="sm:hidden">Respaldar</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => setIsCreatingNew(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-semibold text-white transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Nuevo Repertorio</span>
+            </button>
+          </div>
         </div>
 
         {/* Pestañas de repertorios */}
