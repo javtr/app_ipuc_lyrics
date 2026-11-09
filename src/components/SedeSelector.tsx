@@ -86,11 +86,11 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
       {isOpen && createPortal(
         <div 
           onClick={() => setIsOpen(false)}
-          className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center bg-black/75 backdrop-blur-sm animate-in fade-in duration-200 p-0 sm:p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200"
         >
           <div 
             onClick={e => e.stopPropagation()}
-            className="w-full sm:w-96 bg-slate-900 border border-slate-700 rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden py-2 animate-in slide-in-from-bottom duration-200 max-h-[85vh] flex flex-col"
+            className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden py-2 animate-in zoom-in-95 duration-200 max-h-[85vh] flex flex-col"
           >
             {/* Cabecera del modal */}
             <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
