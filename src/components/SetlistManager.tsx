@@ -19,6 +19,7 @@ interface SetlistManagerProps {
   songs: BaseSong[];
   activeSedeId: string;
   savedSetlists: Setlist[];
+  isMusicianMode?: boolean;
   onSelectSong: (songId: string) => void;
   onSetlistsUpdated: () => void;
 }
@@ -27,6 +28,7 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
   songs,
   activeSedeId,
   savedSetlists,
+  isMusicianMode = false,
   onSelectSong,
   onSetlistsUpdated
 }) => {
@@ -225,9 +227,11 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
                           <span>{song?.title || item.songId}</span>
                           <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
                         </button>
-                        <span className="text-xs text-slate-400">
-                          Tono: <strong className="text-emerald-400">{item.key}</strong>
-                        </span>
+                        {isMusicianMode && (
+                          <span className="text-xs text-slate-400">
+                            Tono: <strong className="text-emerald-400">{item.key}</strong>
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -277,18 +281,20 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
               >
                 {songs.map(s => (
                   <option key={s.id} value={s.id}>
-                    {s.title} ({s.originalKey})
+                    {s.title} {isMusicianMode ? `(${s.originalKey})` : ''}
                   </option>
                 ))}
               </select>
 
-              <input
-                type="text"
-                placeholder="Tono"
-                value={selectedKeyToAdd}
-                onChange={e => setSelectedKeyToAdd(e.target.value.toUpperCase())}
-                className="w-20 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white text-center focus:outline-none focus:border-emerald-500"
-              />
+              {isMusicianMode && (
+                <input
+                  type="text"
+                  placeholder="Tono"
+                  value={selectedKeyToAdd}
+                  onChange={e => setSelectedKeyToAdd(e.target.value.toUpperCase())}
+                  className="w-20 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white text-center focus:outline-none focus:border-emerald-500"
+                />
+              )}
 
               <button
                 onClick={handleAddSongToSetlist}

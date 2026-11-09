@@ -7,12 +7,15 @@ import {
   Sparkles, 
   Flag,
   Share2,
-  Plus
+  Plus,
+  HardDrive,
+  Music
 } from 'lucide-react';
 import { db, initializeDatabase } from './db';
 import { BaseSong } from './types';
 import { resolveSongForDisplay } from './services/songResolver';
 import { decompressSetlist } from './services/urlSharing';
+import { checkAndRequestStoragePersistence } from './services/backupService';
 import { SedeSelector, SEDES_LIST } from './components/SedeSelector';
 import { MusicianView } from './components/MusicianView';
 import { ProjectionView } from './components/ProjectionView';
@@ -21,6 +24,7 @@ import { CorrectionModal } from './components/CorrectionModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { SongEditorModal } from './components/SongEditorModal';
 import { ReaderView } from './components/ReaderView';
+import { BackupModal } from './components/BackupModal';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<'catalog' | 'setlists'>('catalog');
@@ -35,19 +39,21 @@ export function App() {
   const [isSedeModalOpenOnMobile, setIsSedeModalOpenOnMobile] = useState<boolean>(false);
   const [isEditorOpen, setIsEditorOpen] = useState<boolean>(false);
   const [songToEdit, setSongToEdit] = useState<BaseSong | null>(null);
-  const [viewMode, setViewMode] = useState<'lyrics' | 'chords'>(() => {
-    return (localStorage.getItem('app_lyrics_view_mode') as 'lyrics' | 'chords') || 'lyrics';
+  const [isBackupModalOpen, setIsBackupModalOpen] = useState<boolean>(false);
+  const [isMusicianMode, setIsMusicianMode] = useState<boolean>(() => {
+    return localStorage.getItem('app_lyrics_musician_mode') === 'true';
   });
 
-  const handleToggleViewMode = () => {
-    const nextMode = viewMode === 'lyrics' ? 'chords' : 'lyrics';
-    setViewMode(nextMode);
-    localStorage.setItem('app_lyrics_view_mode', nextMode);
+  const toggleMusicianMode = () => {
+    const nextMode = !isMusicianMode;
+    setIsMusicianMode(nextMode);
+    localStorage.setItem('app_lyrics_musician_mode', nextMode.toString());
   };
 
   // Inicializar base de datos IndexedDB en primer montaje
   useEffect(() => {
     initializeDatabase().catch(err => console.error('Error al iniciar BD local:', err));
+    checkAndRequestStoragePersistence().catch(err => console.warn('Error al verificar persistencia:', err));
 
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -167,6 +173,34 @@ export function App() {
               isOpenControlled={isSedeModalOpenOnMobile ? true : undefined}
               onCloseControlled={() => setIsSedeModalOpenOnMobile(false)}
             />
+
+            {/* Conmutador Global Modo Músico / Modo Lector */}
+            <button
+              onClick={toggleMusicianMode}
+              title={isMusicianMode ? "Desactivar modo músico (Ver solo letra lírica)" : "Activar modo músico (Ver acordes y teoría musical)"}
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all shrink-0 ${
+                isMusicianMode
+                  ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500 shadow-sm shadow-emerald-950'
+                  : 'bg-slate-900/90 text-slate-400 border-slate-700 hover:text-white'
+              }`}
+            >
+              <Music className={`w-3.5 h-3.5 ${isMusicianMode ? 'text-emerald-400' : 'text-slate-400'}`} />
+              <span className="hidden sm:inline">
+                {isMusicianMode ? 'Modo Músico' : 'Modo Lector'}
+              </span>
+              <span className="sm:hidden">
+                {isMusicianMode ? 'Músico' : 'Lector'}
+              </span>
+            </button>
+
+            {/* Botón de Copia de Seguridad */}
+            <button
+              onClick={() => setIsBackupModalOpen(true)}
+              title="Copia de seguridad y datos"
+              className="p-1.5 sm:p-2 rounded-xl bg-slate-900 border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white transition-colors shrink-0"
+            >
+              <HardDrive className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+            </button>
           </div>
         </div>
       </header>
@@ -236,7 +270,7 @@ export function App() {
                           )}
                         </div>
                         <p className="text-xs text-slate-400 truncate">
-                          {song.artist || 'Himnario'} • Tono: {song.originalKey}
+                          {song.artist || 'Himnario'} {isMusicianMode && `• Tono: ${song.originalKey}`}
                         </p>
                       </div>
 
@@ -281,27 +315,32 @@ export function App() {
               </div>
             </div>
 
-            {/* Columna Derecha: Vista del Músico para la Canción Seleccionada */}
+            {/* Columna Derecha: Vista de Canción (ReaderView por defecto vs MusicianView según isMusicianMode) */}
             <div className={`lg:col-span-8 ${
               mobileView === 'list' ? 'hidden lg:block' : 'block'
             }`}>
               {activeDisplaySong ? (
-                viewMode === 'lyrics' ? (
-                  <ReaderView
-                    song={activeDisplaySong}
-                    onSwitchToChords={handleToggleViewMode}
-                    onEnterProjection={() => setIsProjectionMode(true)}
-                    onBackToCatalog={() => setMobileView('list')}
-                  />
-                ) : (
+                isMusicianMode ? (
                   <MusicianView
                     song={activeDisplaySong}
                     activeSedeId={activeSedeId}
                     onEnterProjection={() => setIsProjectionMode(true)}
                     onSongUpdated={() => {}}
                     onBackToCatalog={() => setMobileView('list')}
-                    onSwitchToLyrics={handleToggleViewMode}
+                    onSwitchToLyrics={toggleMusicianMode}
                     onEditFullSong={() => {
+                      if (activeBaseSong) {
+                        setSongToEdit(activeBaseSong);
+                        setIsEditorOpen(true);
+                      }
+                    }}
+                  />
+                ) : (
+                  <ReaderView
+                    song={activeDisplaySong}
+                    onEnterProjection={() => setIsProjectionMode(true)}
+                    onBackToCatalog={() => setMobileView('list')}
+                    onEditSong={() => {
                       if (activeBaseSong) {
                         setSongToEdit(activeBaseSong);
                         setIsEditorOpen(true);
@@ -311,7 +350,9 @@ export function App() {
                 )
               ) : (
                 <div className="text-center py-20 text-slate-500 text-sm">
-                  Selecciona una canción del catálogo para ver sus acordes y letra.
+                  {isMusicianMode
+                    ? 'Selecciona una canción del catálogo para ver sus acordes y letra.'
+                    : 'Selecciona una canción del catálogo para leer la letra.'}
                 </div>
               )}
             </div>
@@ -322,6 +363,7 @@ export function App() {
             songs={songs}
             activeSedeId={activeSedeId}
             savedSetlists={setlists}
+            isMusicianMode={isMusicianMode}
             onSelectSong={songId => {
               setSelectedSongId(songId);
               setActiveTab('catalog');
@@ -368,11 +410,21 @@ export function App() {
           isOpen={isEditorOpen}
           initialSong={songToEdit}
           activeSedeId={activeSedeId}
+          isMusicianMode={isMusicianMode}
           onClose={() => setIsEditorOpen(false)}
           onSave={savedSong => {
             setSelectedSongId(savedSong.id);
             setMobileView('detail');
           }}
+        />
+      )}
+
+      {/* Modal de Copia de Seguridad y Datos */}
+      {isBackupModalOpen && (
+        <BackupModal
+          isOpen={isBackupModalOpen}
+          onClose={() => setIsBackupModalOpen(false)}
+          onDataRestored={() => {}}
         />
       )}
     </div>

@@ -1,60 +1,75 @@
-# Plan de Desarrollo Activo: Modo Lector Normal (Por Defecto) vs. Modo Músico
+# Plan de Desarrollo Activo: Estado Global "Modo Músico" y Corrección de Scroll en Editor Móvil
 
 > **Estado:** EJECUTADO (100% Implementado y Validado)
 
 ---
 
-## 1. Objetivo Técnico y Justificación de Negocio
+## 1. Objetivo Técnico y Causa Raíz
 
-La gran mayoría de los usuarios de la aplicación serán miembros de la congregación, cantantes o asistentes que **únicamente necesitan leer la letra limpia de las canciones** para cantar durante el culto o devocional, sin verse abrumados por acordes, tonos, BPM, cifrado ni conceptos de teoría musical.
+### 1.1 Diagnóstico del Problema en Móvil (`SongEditorModal.tsx`)
+En dispositivos móviles, el modal de edición de canciones no permitía ver la letra ni desplazarse hacia abajo debido a que múltiples contenedores anidados tenían la propiedad `overflow-hidden` y alturas fijas (`max-h-[95vh]`, `flex-1 overflow-hidden`). La cabecera de metadatos (título, artista, tono, compás) sumada a la barra de acordes rápidos ocupaba todo el alto disponible de la pantalla, dejando la caja de texto de la letra aplastada o fuera del área visible sin posibilidad de hacer scroll.
 
-Por tanto, el objetivo es:
-1. **Crear el Modo Lector (Usuario Normal / Congregación):**
-   - **Activo por defecto** en la primera carga para cualquier usuario.
-   - Oculta todos los acordes, tonalidades, BPM y notas técnicas de músicos.
-   - Muestra tipografía elegante, espaciosa y de alta legibilidad, destacando sutilmente el **Coro** para facilitar el seguimiento visual del canto.
-   - Conserva los controles esenciales para cantar: ajuste de tamaño de letra (`A-` / `A+`) y auto-scroll suave opcional.
-2. **Modo Músico (Atril / Alabanza):**
-   - Accesible con un toque mediante el botón `🎵 Ver Acordes`.
-   - Muestra el atril completo con acordes ChordPro, transposición, tonos y notas de arreglo.
-3. **Persistencia de Preferencia de Usuario:**
-   - Guardar la selección en `localStorage` (`app_lyrics_view_mode: 'lyrics' | 'chords'`). Si un músico activa los acordes, la app recordará su preferencia; pero para nuevos usuarios o miembros generales siempre abrirá en **Modo Lector**.
+### 1.2 Estado Global de "Modo Músico" en el Navbar
+Actualmente la app asume que cualquiera que edite canciones es un músico que entiende de cifrado. Siguiendo la visión del producto en **[SPECIFICATIONS.md](file:///f:/Desarrollo/app_lyrics/SPECIFICATIONS.md)**, la inmensa mayoría de los usuarios y líderes son miembros que solo necesitan leer y editar la letra lírica de las canciones.
+
+Por tanto, se implementará un **conmutador global en el Navbar superior**:
+1. **`isMusicianMode === false` (Modo Normal / Congregación - Por defecto):**
+   - **En el visor:** Muestra exclusivamente `ReaderView` (letra limpia, coro destacado, auto-scroll). No hay botones para transponer ni ver acordes.
+   - **En el editor:** Se ocultan todos los conceptos de teoría musical (Tono, BPM, Compás, barra de acordes rápidos). Solo permite editar título, artista y el texto de las estrofas limpias.
+   - **En repertorios:** Oculta los selectores y columnas de tonalidad musical.
+   - **En el cancionero:** Oculta las etiquetas de tono en las tarjetas de canciones.
+2. **`isMusicianMode === true` (Modo Músico Activo):**
+   - Habilita acordes ChordPro, transposición en tiempo real, atril con WakeLock, barra táctil de acordes en el editor y selección de tono por canción en repertorios.
+3. **Persistencia:** Guardado en `localStorage` (`app_lyrics_musician_mode: 'true' | 'false'`), iniciando siempre por defecto en `false`.
 
 ---
 
 ## 2. Flujo Lógico y Pseudocódigo
 
-### 2.1 Flujo de Selección de Vista y Persistencia (`src/App.tsx`)
+### 2.1 Estado Global en `src/App.tsx`
 ```text
-ESTADO viewMode = localStorage.getItem('app_lyrics_view_mode') || 'lyrics'
+ESTADO isMusicianMode = (localStorage.getItem('app_lyrics_musician_mode') == 'true') // Default: false
 
-FUNCIÓN toggleViewMode():
-  nuevoModo = (viewMode == 'lyrics') ? 'chords' : 'lyrics'
-  viewMode = nuevoModo
-  localStorage.setItem('app_lyrics_view_mode', nuevoModo)
+FUNCIÓN toggleMusicianMode():
+  nuevoEstado = !isMusicianMode
+  isMusicianMode = nuevoEstado
+  localStorage.setItem('app_lyrics_musician_mode', nuevoEstado.toString())
 
-AL RENDERIZAR CANCIÓN SELECCIONADA:
-  SI viewMode == 'lyrics':
-    RENDERIZAR <ReaderView song={activeDisplaySong} onSwitchToChords={toggleViewMode} />
-  SINO:
-    RENDERIZAR <MusicianView song={activeDisplaySong} onSwitchToLyrics={toggleViewMode} />
+EN NAVBAR (<header>):
+  RENDERIZAR botón conmutador:
+    - Inactivo: "📖 Modo Lector" (Gris / Neutro)
+    - Activo: "🎵 Modo Músico" (Borde e icono Esmeralda activo)
 ```
 
-### 2.2 Componente Modo Lector (`src/components/ReaderView.tsx`)
+### 2.2 Reestructuración del Scroll en `src/components/SongEditorModal.tsx`
 ```text
-PROPIEDADES: song, onSwitchToChords, onEnterProjection, onBackToCatalog
+MODAL CONTAINER:
+  - fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4
+  - max-h-[92vh] flex flex-col bg-slate-900 rounded-2xl overflow-hidden
 
-ESTADO fontSize: 'sm' | 'base' | 'lg' | 'xl' | '2xl' (Default: 'base')
-ESTADO isAutoScrolling: boolean
-ESTADO scrollSpeed: number
-
-PARA CADA seccion EN song.sections:
-  lineasLimpias = getCleanLyrics(seccion.lines) // Remueve corchetes [G], [C]
+CUERPO DEL MODAL (ÚNICO SCROLL FLUIDO):
+  - flex-1 overflow-y-auto p-4 space-y-4
   
-  SI seccion.type == 'chorus':
-    RENDERIZAR con borde izquierdo destacado esmeralda y etiqueta clara "CORO"
+  SI isMusicianMode:
+    - Mostrar campos: Título, Artista, Tono, BPM, Compás
+    - Mostrar Barra de Inserción de Acordes [G], [C], [D]...
+    - Textarea con acordes y live preview
   SINO:
-    RENDERIZAR estrofa normal espaciada
+    - Mostrar solo campos: Título, Artista
+    - Ocultar Barra de Acordes y selectores de Tono
+    - Textarea enfocado únicamente en la letra lírica limpia
+    - Atajos de sección: + Verso, + Coro
+
+FOOTER:
+  - shrink-0 border-t p-3 (Botones Cancelar y Guardar siempre accesibles)
+```
+
+### 2.3 Filtrado Condicional en `src/components/SetlistManager.tsx`
+```text
+SI isMusicianMode == true:
+  Mostrar selector de tono y badge "Tono: G" en cada canción
+SINO:
+  Ocultar tono; mostrar solo título, orden y notas
 ```
 
 ---
@@ -63,24 +78,27 @@ PARA CADA seccion EN song.sections:
 
 | Archivo | Módulo / Componente | Propósito y Ubicación Exacta |
 | :--- | :--- | :--- |
-| `src/components/ReaderView.tsx` | Nuevo Componente | Componente dedicado para el usuario normal: tipografía grande y limpia, sin acordes ni tonos, botones `A-`/`A+`, auto-scroll, y botón `🎵 Modo Músico (Acordes)`. |
-| `src/components/MusicianView.tsx` | Componente | Añadir botón en la barra superior: `📖 Modo Lector (Solo Letra)` para regresar al modo normal con un solo toque. |
-| `src/App.tsx` | Componente Raíz | Líneas 30-40: Inicializar estado `viewMode` desde `localStorage` con valor por defecto `'lyrics'`.<br>Líneas 275-290: Alternar entre `ReaderView` y `MusicianView` según el modo activo. |
-| `tests/readerView.test.ts` | Suite de Pruebas | Pruebas unitarias para verificar que `ReaderView` procesa y presenta únicamente texto limpio sin acordes residuales. |
+| `src/App.tsx` | Componente Raíz | 1. Líneas 30-45: Estado `isMusicianMode` persistido en `localStorage`.<br>2. Líneas 140-160: Botón de conmutación `Modo Músico` en el Navbar superior.<br>3. Líneas 270-290: Condicionar `MusicianView` vs `ReaderView` según `isMusicianMode`.<br>4. Líneas 360-380: Pasar `isMusicianMode` al `SongEditorModal` y `SetlistManager`. |
+| `src/components/SongEditorModal.tsx` | Componente | 1. Props: Añadir `isMusicianMode: boolean`.<br>2. Layout: Eliminar bloqueos de `overflow-hidden` y unificar en un contenedor con `overflow-y-auto`.<br>3. Renderizado condicional: Ocultar selectores de tono, BPM, compás y barra de acordes rápidos si `isMusicianMode === false`. |
+| `src/components/SetlistManager.tsx` | Componente | 1. Props: Añadir `isMusicianMode: boolean`.<br>2. Condicionar la visualización de tonos en las canciones del culto. |
+| `src/components/ReaderView.tsx` | Componente | Eliminar el botón interno "Ver Acordes" si el modo músico ahora se gobierna globalmente desde el Navbar superior. |
+| `tests/musicianMode.test.ts` | Suite de Pruebas | Pruebas unitarias para verificar la consistencia del modo lector limpio vs modo músico en el editor y visor. |
 
 ---
 
 ## 4. Plan de Verificación
 
 1. **Chequeo de Tipos TypeScript:**
-   - Comando: `npx tsc --noEmit`
-   - Criterio: 0 errores de compilación.
+   - Comando: `npx tsc --noEmit` (0 errores).
 2. **Pruebas Unitarias:**
-   - Comando: `npm test`
-   - Criterio: Validación del filtrado de letras y estado de vista normal.
-3. **Validación del Flujo de Usuario:**
-   - Abrir la aplicación por primera vez (o en modo incógnito):
-     - **Verificación 1:** La canción abre directamente en **Modo Lector**: solo texto limpio, sin botones de transposición ni acordes entre corchetes.
-     - **Verificación 2:** El botón `🎵 Ver Acordes` está presente. Al pulsarlo, conmuta al atril de músicos con transposición.
-     - **Verificación 3:** Al pulsar `📖 Solo Letra`, regresa instantáneamente a la vista limpia.
-     - **Verificación 4:** En móviles, la experiencia de lectura es inmediata y cómoda a pantalla completa.
+   - Comando: `npm test` (Todas las pruebas aprobadas).
+3. **Validación en Móvil (Viewport 375px / 390px):**
+   - **Prueba 1 (Modo Normal por Defecto):**
+     - Abrir la app: el Navbar muestra el botón en modo Lector (apagado).
+     - El cancionero no muestra tonos musicales en las canciones.
+     - Al abrir una canción, se lee la letra limpia sin acordes.
+     - Al tocar "+ Nueva" o "Editar", el modal se despliega: se puede hacer scroll hacia abajo cómodamente, la caja de texto para escribir la letra es grande y accesible, y no aparece ninguna barra de acordes ni selector de tono.
+   - **Prueba 2 (Activación de Modo Músico):**
+     - Tocar el botón "Modo Músico" en el Navbar: se enciende con badge verde esmeralda.
+     - La canción actual muestra inmediatamente los acordes y el atril de músicos con transposición.
+     - Al abrir el editor, se despliegan los controles de tono, BPM y la barra táctil de acordes.

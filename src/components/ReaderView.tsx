@@ -6,16 +6,18 @@ import {
   ArrowLeft, 
   Music, 
   Type,
-  Sparkles
+  Sparkles,
+  Edit3
 } from 'lucide-react';
 import { DisplaySong } from '../types';
 import { getCleanLyrics } from '../services/chordParser';
 
 interface ReaderViewProps {
   song: DisplaySong;
-  onSwitchToChords: () => void;
+  onSwitchToChords?: () => void;
   onEnterProjection: () => void;
   onBackToCatalog?: () => void;
+  onEditSong?: () => void;
 }
 
 type ReaderFontSize = 'sm' | 'base' | 'lg' | 'xl' | '2xl';
@@ -32,7 +34,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   song,
   onSwitchToChords,
   onEnterProjection,
-  onBackToCatalog
+  onBackToCatalog,
+  onEditSong
 }) => {
   const [fontSize, setFontSize] = useState<ReaderFontSize>('base');
   const [isAutoScrolling, setIsAutoScrolling] = useState<boolean>(false);
@@ -143,15 +146,29 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             <span className="hidden sm:inline">Proyección</span>
           </button>
 
-          {/* Conmutador a Modo Músico */}
-          <button
-            onClick={onSwitchToChords}
-            title="Ver acordes para músicos"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-emerald-600/40 text-emerald-300 rounded-xl text-xs font-semibold shadow-sm transition-colors"
-          >
-            <Music className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Ver Acordes</span>
-          </button>
+          {/* Botón de Editar Letra Lírica */}
+          {onEditSong && (
+            <button
+              onClick={onEditSong}
+              title="Editar letra de la canción"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-xl text-xs font-semibold shadow-sm transition-colors"
+            >
+              <Edit3 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Editar Letra</span>
+            </button>
+          )}
+
+          {/* Conmutador a Modo Músico (opcional) */}
+          {onSwitchToChords && (
+            <button
+              onClick={onSwitchToChords}
+              title="Ver acordes para músicos"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-emerald-600/40 text-emerald-300 rounded-xl text-xs font-semibold shadow-sm transition-colors"
+            >
+              <Music className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Ver Acordes</span>
+            </button>
+          )}
         </div>
       </div>
 
