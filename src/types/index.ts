@@ -63,6 +63,7 @@ export interface Setlist {
 export interface SedeProfile {
   id: string;
   name: string;
+  shortName?: string;
   isDefault?: boolean;
 }
 

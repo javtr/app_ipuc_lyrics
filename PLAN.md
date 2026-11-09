@@ -1,118 +1,83 @@
-# Plan de Desarrollo Activo: Optimización y Experiencia Móvil de Primera Clase (Mobile-First)
+# Plan de Desarrollo Activo: Corrección del Navbar Móvil y Modal de Sede
 
 > **Estado:** EJECUTADO (100% Implementado y Validado)
 
 ---
 
-## 1. Objetivo Técnico
-Adaptar integralmente **App Lyrics** para teléfonos móviles (smartphones) donde los músicos tienen el dispositivo colocado en atriles o soportes de micrófono, conservando al 100% la experiencia de escritorio existente:
+## 1. Objetivo Técnico y Causa Raíz
 
-1. **Navegación Móvil Nativa (Patrón Master-Detail + Tab Bar Inferior):**
-   - En pantallas pequeñas (`< 1024px`), desacoplar la lista de canciones del visor. Al seleccionar una canción, se abre a pantalla completa con botón `← Volver`.
-   - Barra de navegación inferior fija (*Bottom Navigation Bar*) accesible con el pulgar: Cancionero, Repertorios y Sedes.
-   - En escritorio (`lg:` en adelante), se conserva intacto el layout de 2 columnas lado a lado.
-2. **Atril Digital Móvil (Musician View):**
-   - **Control de Tamaño de Letra (A- / A+):** Permitir a los músicos ajustar el tamaño de fuente (desde compacto hasta extragrande) para lectura cómoda a distancia de atril.
-   - **API de Bloqueo de Pantalla (*Screen Wake Lock API*):** Evitar que la pantalla del celular se apague o bloquee mientras el músico está tocando.
-   - Barra de controles compacta y optimizada para no robar espacio vertical de lectura.
-   - Salto de línea inteligente de acordes ChordPro en pantallas estrechas (360px-420px).
-3. **Modo Proyección Táctil para Móviles (Swipe Gestures):**
-   - Detección de gestos táctiles de deslizamiento (*Swipe Left* para avanzar, *Swipe Right* para retroceder).
-   - Zonas de toque táctil en pantalla (tocar la mitad derecha para avanzar, mitad izquierda para retroceder).
-   - Adaptación de tipografía y orientación vertical/horizontal.
-4. **Selector de Sedes Adaptativo:**
-   - Menú tipo *Bottom Sheet* / modal táctil en móviles para cambiar de congregación fácilmente sin desbordes.
+### 1.1 Diagnóstico de la Causa Raíz
+Al presionar el botón de sede ("General Nacional") en móviles, la interfaz se desborda y el menú colapsa dentro del navbar debido a dos problemas técnicos concatenados:
+
+1. **Trampa de Bloque Contenedor CSS (*Containing Block Trap*):**
+   - El elemento `<header>` en `src/App.tsx` utiliza la clase `backdrop-blur-md` (`backdrop-filter`).
+   - Según la especificación del W3C, cualquier elemento con `backdrop-filter` o `transform` se convierte en el **bloque contenedor forzado** para todos sus descendientes con `position: fixed`.
+   - Por esta razón, el modal de sedes (`fixed inset-0`), en lugar de cubrir toda la pantalla del teléfono, queda atrapado y confinado dentro de la barra de navegación de 56px de altura, provocando que el navbar se deforme y desborde visualmente.
+2. **Longitud del Texto en Pantallas Angostas (360px - 390px):**
+   - El nombre `"Catálogo General (Nacional)"` es demasiado extenso para el espacio disponible junto al logotipo y el indicador de red en la cabecera móvil.
+
+### 1.2 Alcance del Cambio
+1. Desacoplar el Modal de Selección de Sedes del `<header>` usando un **React Portal** (`createPortal(..., document.body)`), garantizando que el modal se monte directamente en el `<body>` y cubra la pantalla completa sin interferencia de las cabeceras.
+2. Agregar la propiedad `shortName` al modelo `SedeProfile` para mostrar nombres cortos optimizados en pantallas móviles (`"General"`, `"Palestina"`, `"Central"`).
+3. Compactar el botón y el indicador de red en el navbar móvil para evitar cualquier desborde horizontal.
 
 ---
 
 ## 2. Flujo Lógico y Pseudocódigo
 
-### 2.1 Hook Screen Wake Lock (`src/hooks/useWakeLock.ts`)
+### 2.1 Uso de React Portal para el Modal de Sedes (`src/components/SedeSelector.tsx`)
 ```text
-HOOK useWakeLock():
-  ESTADO isSupported = 'wakeLock' in navigator
-  ESTADO isActive = FALSE
-  REFERENCIA sentinel = NULL
-
-  FUNCIÓN requestWakeLock():
-    SI isSupported:
-      sentinel = await navigator.wakeLock.request('screen')
-      isActive = VERDADERO
-      sentinel.onrelease = () => isActive = FALSO
-
-  FUNCIÓN releaseWakeLock():
-    SI sentinel != NULL:
-      await sentinel.release()
-      sentinel = NULL
-      isActive = FALSO
-
-  EFECTO al montar/desmontar o cambiar visibilidad:
-    SI document.visibilityState == 'visible' Y isActive:
-      solicitar wakeLock de nuevo
-```
-
-### 2.2 Detección de Gestos Táctiles en Proyección (`src/components/ProjectionView.tsx`)
-```text
-VARIABLES touchStartX, touchEndX
-
-EN onTouchStart(e):
-  touchStartX = e.changedTouches[0].screenX
-
-EN onTouchEnd(e):
-  touchEndX = e.changedTouches[0].screenX
-  diferencia = touchStartX - touchEndX
+EN SedeSelector:
+  ESTADO isOpen = false
   
-  SI diferencia > 50: // Deslizó hacia la izquierda
-    handleNext()
-  SINO SI diferencia < -50: // Deslizó hacia la derecha
-    handlePrev()
+  // El botón permanece en el navbar
+  RENDERIZAR botón en el header con shortName
+  
+  // El modal se renderiza en document.body mediante createPortal
+  SI isOpen:
+    RETORNAR createPortal(
+      <DIV fixed inset-0 z-50 flex items-end sm:items-center bg-black/75 ...>
+        <DIV w-full sm:w-80 bg-slate-900 rounded-t-3xl ...>
+          Contenido del selector de sedes y botón de nueva sede
+        </DIV>
+      </DIV>,
+      document.body
+    )
 ```
 
-### 2.3 Navegación Responsiva en `App.tsx`
+### 2.2 Nombres Cortos Adaptativos en el Modelo de Sedes
 ```text
-ESTADO mobileView: 'list' | 'detail' (Solo activo en móviles < 1024px)
-
-AL SELECCIONAR CANCIÓN EN MÓVIL:
-  selectedSongId = songId
-  mobileView = 'detail'
-
-AL PRESIONAR "VOLVER":
-  mobileView = 'list'
-
-EN ESCRITORIO (lg:):
-  mobileView se ignora, mostrando siempre catálogo a la izquierda y atril a la derecha.
+SEDES_LIST = [
+  { id: 'general', name: 'Catálogo General (Nacional)', shortName: 'General' },
+  { id: 'sede-palestina', name: 'Sede Palestina (Caldas)', shortName: 'Palestina' },
+  { id: 'sede-central', name: 'Sede Central', shortName: 'Central' }
+]
 ```
 
 ---
 
 ## 3. Matriz de Cambios y Ubicaciones Exactas
 
-| Archivo | Módulo / Clase | Propósito y Ubicación Exacta |
+| Archivo | Módulo / Componente | Propósito y Ubicación Exacta |
 | :--- | :--- | :--- |
-| `src/hooks/useWakeLock.ts` | Nuevo Hook | Implementación de `useWakeLock` para mantener pantalla encendida en móviles. |
-| `src/components/MobileBottomNav.tsx` | Nuevo Componente | Barra de pestañas inferior fija (`lg:hidden`) para Canciones, Repertorios y Sede. |
-| `src/components/MusicianView.tsx` | Componente | Añadir selector de tamaño de fuente (`A-` / `A+`), indicador/toggle de pantalla encendida, botón móvil de retorno (`← Volver`) y controles compactos para móvil. |
-| `src/components/ProjectionView.tsx` | Componente | Integración de gestos táctiles de swipe (`onTouchStart`, `onTouchEnd`) y zonas de toque táctil para navegación en teléfonos. |
-| `src/components/SedeSelector.tsx` | Componente | Optimización de estilos táctiles y modal responsivo para móviles. |
-| `src/App.tsx` | Componente Raíz | Soporte para vista Master-Detail en móvil (`mobileView: 'list' | 'detail'`), integración de `MobileBottomNav` y preservación íntegra de la grilla de escritorio. |
-| `tests/wakeLock.test.ts` | Suite de Pruebas | Pruebas de simulación para el hook `useWakeLock`. |
+| `src/types/index.ts` | Modelos de Datos | Línea 65-70: Agregar campo opcional `shortName?: string` a la interfaz `SedeProfile`. |
+| `src/components/SedeSelector.tsx` | Componente | 1. Línea 11-16: Definir `shortName` en `SEDES_LIST`.<br>2. Línea 70-85: Mostrar `shortName` en el botón móvil del navbar con ancho limitado (`max-w-[75px] sm:max-w-[120px]`).<br>3. Línea 88+: Envolver el renderizado del modal con `createPortal(..., document.body)` importado de `react-dom`. |
+| `src/App.tsx` | Componente Raíz | Línea 80-110: Ajustar el espaciado del header (`gap-1.5 sm:gap-4`) y asegurar que los elementos no colisionen en pantallas estrechas. |
 
 ---
 
 ## 4. Plan de Verificación
 
-1. **Verificación de Pruebas Unitarias:**
-   - Comando: `npm test`
-   - Validar que todas las pruebas existentes de acordes, resolución y URLs siguen pasando al 100%, más las nuevas pruebas.
-2. **Chequeo de Tipos TypeScript:**
+1. **Chequeo de Tipos TypeScript:**
    - Comando: `npx tsc --noEmit`
-   - Cero errores de compilación.
+   - Criterio: 0 errores de tipado.
+2. **Pruebas Unitarias:**
+   - Comando: `npm test`
+   - Criterio: Todos los tests pasan al 100%.
 3. **Build de Producción:**
    - Comando: `npm run build`
-   - Validación del bundle y service worker.
-4. **Verificación en Navegador (DevTools Modo Móvil - iPhone / Pixel):**
-   - Probar ancho 375px y 412px: la lista ocupa 100% del ancho con navegación táctil fluida.
-   - Al tocar una canción se abre el atril completo con botón "Volver".
-   - Botones A- / A+ ajustan el tamaño de letra en tiempo real.
-   - En Proyección, tocar la mitad derecha avanza y la izquierda retrocede.
-   - En pantalla de escritorio (`> 1024px`), la vista continúa con el panel dual lado a lado.
+   - Criterio: Compilación limpia sin advertencias ni desbordes.
+4. **Verificación Visual en Móvil (360px - 390px):**
+   - Abrir en vista móvil (iPhone SE / Galaxy S20).
+   - Tocar el botón de sede: el modal debe abrirse suavemente como un *Bottom Sheet* desde el fondo de la pantalla completa del teléfono, sin alterar ni deformar el navbar superior.
+   - Seleccionar "General" o "Palestina": el botón se actualiza sin desbordar el navbar.

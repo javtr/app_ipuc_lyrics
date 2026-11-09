@@ -87,7 +87,7 @@ export function App() {
     ? resolveSongForDisplay(activeBaseSong, activeSedeId, overrides)
     : null;
 
-  const currentSedeProfile = SEDES_LIST.find(s => s.id === activeSedeId) || { name: 'Catálogo' };
+  const currentSedeProfile = SEDES_LIST.find(s => s.id === activeSedeId) || { name: 'Catálogo', shortName: 'General' };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col pb-16 lg:pb-0">
@@ -299,7 +299,7 @@ export function App() {
           }
         }}
         onOpenSedeSelector={() => setIsSedeModalOpenOnMobile(true)}
-        activeSedeName={currentSedeProfile.name.replace('Catálogo ', '')}
+        activeSedeName={currentSedeProfile.shortName || currentSedeProfile.name.replace('Catálogo ', '')}
       />
 
       {/* Modo Proyección (Pantalla Completa) */}
