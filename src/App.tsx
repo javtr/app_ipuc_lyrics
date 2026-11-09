@@ -20,6 +20,7 @@ import { SetlistManager } from './components/SetlistManager';
 import { CorrectionModal } from './components/CorrectionModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { SongEditorModal } from './components/SongEditorModal';
+import { ReaderView } from './components/ReaderView';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<'catalog' | 'setlists'>('catalog');
@@ -34,6 +35,15 @@ export function App() {
   const [isSedeModalOpenOnMobile, setIsSedeModalOpenOnMobile] = useState<boolean>(false);
   const [isEditorOpen, setIsEditorOpen] = useState<boolean>(false);
   const [songToEdit, setSongToEdit] = useState<BaseSong | null>(null);
+  const [viewMode, setViewMode] = useState<'lyrics' | 'chords'>(() => {
+    return (localStorage.getItem('app_lyrics_view_mode') as 'lyrics' | 'chords') || 'lyrics';
+  });
+
+  const handleToggleViewMode = () => {
+    const nextMode = viewMode === 'lyrics' ? 'chords' : 'lyrics';
+    setViewMode(nextMode);
+    localStorage.setItem('app_lyrics_view_mode', nextMode);
+  };
 
   // Inicializar base de datos IndexedDB en primer montaje
   useEffect(() => {
@@ -276,19 +286,29 @@ export function App() {
               mobileView === 'list' ? 'hidden lg:block' : 'block'
             }`}>
               {activeDisplaySong ? (
-                <MusicianView
-                  song={activeDisplaySong}
-                  activeSedeId={activeSedeId}
-                  onEnterProjection={() => setIsProjectionMode(true)}
-                  onSongUpdated={() => {}}
-                  onBackToCatalog={() => setMobileView('list')}
-                  onEditFullSong={() => {
-                    if (activeBaseSong) {
-                      setSongToEdit(activeBaseSong);
-                      setIsEditorOpen(true);
-                    }
-                  }}
-                />
+                viewMode === 'lyrics' ? (
+                  <ReaderView
+                    song={activeDisplaySong}
+                    onSwitchToChords={handleToggleViewMode}
+                    onEnterProjection={() => setIsProjectionMode(true)}
+                    onBackToCatalog={() => setMobileView('list')}
+                  />
+                ) : (
+                  <MusicianView
+                    song={activeDisplaySong}
+                    activeSedeId={activeSedeId}
+                    onEnterProjection={() => setIsProjectionMode(true)}
+                    onSongUpdated={() => {}}
+                    onBackToCatalog={() => setMobileView('list')}
+                    onSwitchToLyrics={handleToggleViewMode}
+                    onEditFullSong={() => {
+                      if (activeBaseSong) {
+                        setSongToEdit(activeBaseSong);
+                        setIsEditorOpen(true);
+                      }
+                    }}
+                  />
+                )
               ) : (
                 <div className="text-center py-20 text-slate-500 text-sm">
                   Selecciona una canción del catálogo para ver sus acordes y letra.

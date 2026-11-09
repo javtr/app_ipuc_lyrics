@@ -13,7 +13,8 @@ import {
   ArrowLeft,
   Sun,
   Moon,
-  Type
+  Type,
+  BookOpen
 } from 'lucide-react';
 import { DisplaySong, SedeSongOverride } from '../types';
 import { parseChordProLine, transposeChord, transposeLine } from '../services/chordParser';
@@ -27,6 +28,7 @@ interface MusicianViewProps {
   onSongUpdated: () => void;
   onBackToCatalog?: () => void;
   onEditFullSong?: () => void;
+  onSwitchToLyrics?: () => void;
 }
 
 type FontSize = 'sm' | 'base' | 'lg' | 'xl' | '2xl';
@@ -45,7 +47,8 @@ export const MusicianView: React.FC<MusicianViewProps> = ({
   onEnterProjection,
   onSongUpdated,
   onBackToCatalog,
-  onEditFullSong
+  onEditFullSong,
+  onSwitchToLyrics
 }) => {
   const [transposeOffset, setTransposeOffset] = useState<number>(0);
   const [isAutoScrolling, setIsAutoScrolling] = useState<boolean>(false);
@@ -259,6 +262,18 @@ export const MusicianView: React.FC<MusicianViewProps> = ({
             <Maximize2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-blue-400" />
             <span className="hidden sm:inline">Proyección</span>
           </button>
+
+          {/* Conmutador a Modo Lector (Solo Letra) */}
+          {onSwitchToLyrics && (
+            <button
+              onClick={onSwitchToLyrics}
+              title="Volver a vista limpia de solo letra"
+              className="flex items-center gap-1 px-2.5 sm:px-3 py-1 sm:py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded-xl text-[11px] sm:text-xs font-semibold text-slate-200 transition-colors"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-blue-400" />
+              <span>Solo Letra</span>
+            </button>
+          )}
 
           {/* Botón Editar Letra Completa */}
           {onEditFullSong && (
