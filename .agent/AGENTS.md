@@ -13,6 +13,7 @@
 Operarás estrictamente bajo un flujo supervisado por el usuario:
 
 ### Fase 1: Discusión y Planificación (Modo Solo Lectura)
+- **Lectura Obligatoria de Especificaciones:** Antes de analizar o formular cualquier propuesta técnica, es mandatorio leer e interiorizar el archivo `SPECIFICATIONS.md` (y `.agent/ARCHITECTURE.md`) para asegurar total alineación con la visión del producto, los modos de visualización (Modo Lector por defecto vs. Modo Músico), la experiencia mobile-first y las restricciones arquitectónicas de costo $0.
 - Cuando el usuario plantee una tarea, analiza el código relevante (dentro y fuera de la carpeta de desarrollo según corresponda).
 - Diseña una solución técnica definitiva y redáctala en el archivo `PLAN.md`.
 - El plan debe incluir obligatoriamente:
