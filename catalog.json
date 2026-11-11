@@ -1,0 +1,167 @@
+[
+    {
+        "artist":  "John Newton",
+        "id":  "sublime-gracia",
+        "timeSignature":  "3/4",
+        "tags":  [
+                     "Himno",
+                     "Adoración",
+                     "Gracia"
+                 ],
+        "sections":  [
+                         {
+                             "label":  "Verso 1",
+                             "lines":  [
+                                           "[G]Sublime gracia del [C]Señor[G]",
+                                           "Que a un [Em]infeliz sal[D]vó",
+                                           "Fui [G]ciego mas hoy [C]veo [G]yo",
+                                           "Per[Em]dido y Él [D]me ha[G]lló"
+                                       ],
+                             "id":  "v1",
+                             "type":  "verse"
+                         },
+                         {
+                             "label":  "Verso 2",
+                             "lines":  [
+                                           "Su [G]gracia me enseñó [C]a te[G]mer",
+                                           "Mis [Em]dudas ahu[D]yentó",
+                                           "¡Oh [G]cuán precioso [C]fue a mi [G]ser",
+                                           "Cuan[Em]do Él me [D]transfor[G]mó!"
+                                       ],
+                             "id":  "v2",
+                             "type":  "verse"
+                         },
+                         {
+                             "label":  "Coro",
+                             "lines":  [
+                                           "[G]¡Aleluya! [C]¡Ale[G]luya!",
+                                           "A [Em]Cristo daré [D]loor",
+                                           "[G]Por Su gracia y [C]Su per[G]dón",
+                                           "Por [Em]siempre a Él [D]canta[G]ré"
+                                       ],
+                             "id":  "c1",
+                             "type":  "chorus"
+                         }
+                     ],
+        "originalKey":  "G",
+        "updatedAt":  "2026-11-11T12:00:00.000Z",
+        "bpm":  72,
+        "title":  "Sublime Gracia"
+    },
+    {
+        "artist":  "Carl Boberg",
+        "id":  "cuan-grande-es-el",
+        "timeSignature":  "4/4",
+        "tags":  [
+                     "Himno",
+                     "Majestad",
+                     "Adoración"
+                 ],
+        "sections":  [
+                         {
+                             "label":  "Verso 1",
+                             "lines":  [
+                                           "Se[A]ñor mi Dios al contemplar [D]los cielos",
+                                           "El [A]firmamento y las [E]estrellas [A]mil",
+                                           "Al oír Tu voz en los po[D]tentes truenos",
+                                           "Y [A]ver brillar al [E]sol en su ce[A]nit"
+                                       ],
+                             "id":  "v1",
+                             "type":  "verse"
+                         },
+                         {
+                             "label":  "Coro",
+                             "lines":  [
+                                           "Mi corazón se [D]llena de emoción",
+                                           "¡Cuán grande es [A]Él! [F#m]¡Cuán grande es [Bm]Él! [E]",
+                                           "Mi corazón se [D]llena de emoción",
+                                           "¡Cuán grande es [A]Él! [E]¡Cuán grande es [A]Él!"
+                                       ],
+                             "id":  "c1",
+                             "type":  "chorus"
+                         }
+                     ],
+        "originalKey":  "A",
+        "updatedAt":  "2026-11-11T12:00:00.000Z",
+        "bpm":  68,
+        "title":  "Cuán Grande es Él"
+    },
+    {
+        "artist":  "Bethel Music",
+        "id":  "la-bondad-de-dios",
+        "timeSignature":  "4/4",
+        "tags":  [
+                     "Alabanza",
+                     "Gratitud",
+                     "Contemporánea"
+                 ],
+        "sections":  [
+                         {
+                             "label":  "Verso 1",
+                             "lines":  [
+                                           "Te [G]amo Dios, Tu gracia nunca [C]falla",
+                                           "Todos mis [G]días en Tus manos [D]están",
+                                           "Desde el [Em]momento en que des[C]pierto",
+                                           "Hasta el [G]anoche[D]cer[Em]",
+                                           "Canta[C]ré de la [D]bondad de [G]Dios"
+                                       ],
+                             "id":  "v1",
+                             "type":  "verse"
+                         },
+                         {
+                             "label":  "Coro",
+                             "lines":  [
+                                           "En mi [C]vida has sido bueno",
+                                           "En mi [G]vida has sido tan, tan [D]fiel",
+                                           "Con cada a[C]liento que me das",
+                                           "Canta[G]ré de la [D]bondad de [Em]Dios",
+                                           "Canta[C]ré de la [D]bondad de [G]Dios"
+                                       ],
+                             "id":  "c1",
+                             "type":  "chorus"
+                         }
+                     ],
+        "originalKey":  "G",
+        "updatedAt":  "2026-11-11T12:00:00.000Z",
+        "bpm":  70,
+        "title":  "La Bondad de Dios"
+    },
+    {
+        "artist":  "Thomas Chisholm",
+        "id":  "grande-es-tu-fidelidad",
+        "timeSignature":  "3/4",
+        "tags":  [
+                     "Himno",
+                     "Fidelidad",
+                     "Adoración"
+                 ],
+        "sections":  [
+                         {
+                             "label":  "Verso 1",
+                             "lines":  [
+                                           "Oh [D]Dios eter[G]no, Tu [A]misericor[D]dia",
+                                           "Ni una [G]sombra de [D]duda ten[E7]drá[A]",
+                                           "Tu compa[A7]sión y bon[D]dad nunca [G]fallan",
+                                           "Y por los [D]siglos el [A7]mismo se[D]rás"
+                                       ],
+                             "id":  "v1",
+                             "type":  "verse"
+                         },
+                         {
+                             "label":  "Coro",
+                             "lines":  [
+                                           "[A]¡Grande es Tu [D]fidelidad! [B7]¡Grande es Tu [Em]fidelidad!",
+                                           "[A7]Cada ma[D]ñana la [A]veo bril[E7]lar[A]",
+                                           "[A7]Todo lo [D]que he necesitado, [G]Tu mano [Gm]fiel lo dio",
+                                           "[D]¡Grande es Tu [A7]fideli[D]dad!"
+                                       ],
+                             "id":  "c1",
+                             "type":  "chorus"
+                         }
+                     ],
+        "originalKey":  "D",
+        "updatedAt":  "2026-11-11T12:00:00.000Z",
+        "bpm":  66,
+        "title":  "Grande es Tu Fidelidad"
+    }
+]

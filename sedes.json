@@ -1,0 +1,18 @@
+[
+    {
+        "isDefault":  true,
+        "name":  "Catálogo General (Nacional)",
+        "id":  "general",
+        "shortName":  "General"
+    },
+    {
+        "name":  "Sede Palestina (Caldas)",
+        "id":  "sede-palestina",
+        "shortName":  "Palestina"
+    },
+    {
+        "name":  "Sede Central",
+        "id":  "sede-central",
+        "shortName":  "Central"
+    }
+]
