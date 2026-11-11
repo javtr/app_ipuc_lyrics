@@ -21,7 +21,7 @@ interface SetlistManagerProps {
   activeSedeId: string;
   savedSetlists: Setlist[];
   isMusicianMode?: boolean;
-  onSelectSong: (songId: string) => void;
+  onSelectSong: (songId: string, sourceSedeId?: string) => void;
   onSetlistsUpdated: () => void;
   onOpenBackup?: () => void;
 }
@@ -238,7 +238,7 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
                       </span>
                       <div>
                         <button
-                          onClick={() => onSelectSong(item.songId)}
+                          onClick={() => onSelectSong(item.songId, currentSetlist.sedeId)}
                           className="text-sm font-semibold text-white hover:text-emerald-400 text-left transition-colors flex items-center gap-1.5"
                         >
                           <span>{song?.title || item.songId}</span>

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { DisplaySong } from '../types';
 import { getCleanLyrics } from '../services/chordParser';
+import { FallbackNoticeBanner } from './FallbackNoticeBanner';
 
 interface ReaderViewProps {
   song: DisplaySong;
@@ -192,6 +193,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             Autor / Artista: <strong className="text-slate-200">{song.artist}</strong>
           </p>
         )}
+
+        <FallbackNoticeBanner message={song.fallbackNotice} />
       </div>
 
       {/* Letra Limpia Organizada por Secciones */}

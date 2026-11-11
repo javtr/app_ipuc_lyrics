@@ -154,7 +154,8 @@ Por siempre y para siempre`);
       bpm: isMusicianMode && typeof bpm === 'number' ? bpm : initialSong?.bpm,
       timeSignature: isMusicianMode ? timeSignature : (initialSong?.timeSignature || '4/4'),
       sections,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      syncSource: 'local'
     };
 
     if (saveTarget === 'sede' && activeSedeId !== 'general') {
@@ -165,7 +166,8 @@ Por siempre y para siempre`);
         customTitle: `${title.trim()} (Versión ${activeSedeId.replace('sede-', '')})`,
         customKey: isMusicianMode ? originalKey : (initialSong?.originalKey || 'G'),
         customSections: sections,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
+        syncSource: 'local'
       };
 
       await db.overrides.put(override);

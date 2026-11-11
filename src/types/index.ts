@@ -7,6 +7,18 @@ export interface SongSection {
   lines: string[];
 }
 
+export type SyncSource = 'seed' | 'remote' | 'local';
+
+export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'error';
+
+export interface SyncResult {
+  status: SyncStatus;
+  updatedSongs: number;
+  updatedOverrides: number;
+  sedes?: SedeProfile[];
+  errorMessage?: string;
+}
+
 export interface BaseSong {
   id: string;
   title: string;
@@ -17,6 +29,7 @@ export interface BaseSong {
   sections: SongSection[];
   tags?: string[];
   updatedAt: string;
+  syncSource?: SyncSource;
 }
 
 export interface SedeSongOverride {
@@ -28,6 +41,7 @@ export interface SedeSongOverride {
   customSections?: SongSection[];
   localNotes?: string;
   updatedAt: string;
+  syncSource?: SyncSource;
 }
 
 export interface DisplaySong {
@@ -42,6 +56,7 @@ export interface DisplaySong {
   isLocalOverride: boolean;
   sedeId?: string;
   originalSong?: BaseSong;
+  fallbackNotice?: string;
 }
 
 export interface SetlistItem {

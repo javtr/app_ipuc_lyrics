@@ -20,6 +20,7 @@ import { DisplaySong, SedeSongOverride } from '../types';
 import { parseChordProLine, transposeChord, transposeLine } from '../services/chordParser';
 import { useWakeLock } from '../hooks/useWakeLock';
 import { db } from '../db';
+import { FallbackNoticeBanner } from './FallbackNoticeBanner';
 
 interface MusicianViewProps {
   song: DisplaySong;
@@ -102,7 +103,8 @@ export const MusicianView: React.FC<MusicianViewProps> = ({
       customTitle: `${song.originalSong?.title || song.title} (Sede ${activeSedeId.replace('sede-', '')})`,
       customKey: overrideKey,
       localNotes: overrideNotes,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      syncSource: 'local'
     };
 
     await db.overrides.put(override);
@@ -334,6 +336,8 @@ export const MusicianView: React.FC<MusicianViewProps> = ({
             </div>
           </div>
         )}
+
+        <FallbackNoticeBanner message={song.fallbackNotice} />
       </div>
 
       {/* Letra y Acordes formateados en secciones */}

@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Church, Wifi, WifiOff, Plus, Check, X } from 'lucide-react';
-import { SedeProfile } from '../types';
+import { Church, Wifi, WifiOff, Plus, Check, X, RefreshCw } from 'lucide-react';
+import { SedeProfile, SyncStatus } from '../types';
 
 interface SedeSelectorProps {
   activeSedeId: string;
@@ -9,6 +9,10 @@ interface SedeSelectorProps {
   isOnline: boolean;
   isOpenControlled?: boolean;
   onCloseControlled?: () => void;
+  sedesList?: SedeProfile[];
+  syncStatus?: SyncStatus;
+  lastSyncAt?: string | null;
+  onManualSync?: () => void;
 }
 
 export const SEDES_LIST: SedeProfile[] = [
@@ -17,17 +21,41 @@ export const SEDES_LIST: SedeProfile[] = [
   { id: 'sede-central', name: 'Sede Central', shortName: 'Central' }
 ];
 
+function formatLastSyncLabel(isoDate?: string | null): string {
+  if (!isoDate) return 'Sin sincronización reciente';
+  const parsed = new Date(isoDate);
+  if (Number.isNaN(parsed.getTime())) return 'Actualizado';
+  return `Actualizado: ${parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
 export const SedeSelector: React.FC<SedeSelectorProps> = ({
   activeSedeId,
   onSelectSede,
   isOnline,
   isOpenControlled,
-  onCloseControlled
+  onCloseControlled,
+  sedesList,
+  syncStatus = 'idle',
+  lastSyncAt,
+  onManualSync
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false);
-  const [sedes, setSedes] = useState<SedeProfile[]>(SEDES_LIST);
+  const [sedes, setSedes] = useState<SedeProfile[]>(sedesList && sedesList.length > 0 ? sedesList : SEDES_LIST);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newSedeName, setNewSedeName] = useState('');
+
+  useEffect(() => {
+    if (!sedesList || sedesList.length === 0) return;
+    setSedes(prev => {
+      const merged = [...sedesList];
+      for (const localSede of prev) {
+        if (!merged.some(s => s.id === localSede.id)) {
+          merged.push(localSede);
+        }
+      }
+      return merged;
+    });
+  }, [sedesList]);
 
   const isOpen = isOpenControlled !== undefined ? isOpenControlled : internalIsOpen;
   const setIsOpen = (val: boolean) => {
@@ -139,8 +167,31 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
               ))}
             </div>
 
-            {/* Botón para añadir nueva sede */}
-            <div className="p-3 border-t border-slate-800 bg-slate-950/50">
+            {/* Estado de actualización y botón para añadir nueva sede */}
+            <div className="p-3 border-t border-slate-800 bg-slate-950/50 space-y-2">
+              {onManualSync && (
+                <div className="flex items-center justify-between gap-2 px-1">
+                  <span className="text-[11px] text-slate-400 truncate">
+                    {syncStatus === 'syncing'
+                      ? 'Actualizando cancionero...'
+                      : syncStatus === 'error'
+                        ? 'No se pudo actualizar (usando local)'
+                        : !isOnline
+                          ? 'Sin conexión (modo local)'
+                          : formatLastSyncLabel(lastSyncAt)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onManualSync}
+                    disabled={!isOnline || syncStatus === 'syncing'}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[11px] font-semibold text-emerald-400 disabled:opacity-40 transition-colors shrink-0"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+                    <span>Actualizar</span>
+                  </button>
+                </div>
+              )}
+
               <button
                 onClick={() => {
                   setIsOpen(false);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   BookOpen, 
@@ -11,10 +11,17 @@ import {
   Music
 } from 'lucide-react';
 import { db, initializeDatabase } from './db';
-import { BaseSong } from './types';
+import { BaseSong, SedeProfile, SyncStatus } from './types';
 import { resolveSongForDisplay } from './services/songResolver';
 import { decompressSetlist } from './services/urlSharing';
 import { checkAndRequestStoragePersistence } from './services/backupService';
+import {
+  getLastSyncAt,
+  getStoredSedes,
+  isSedeSynced,
+  syncCatalogAndSede,
+  syncSedeFromGitHub
+} from './services/gitSyncService';
 import { SedeSelector, SEDES_LIST } from './components/SedeSelector';
 import { MusicianView } from './components/MusicianView';
 import { ProjectionView } from './components/ProjectionView';
@@ -25,9 +32,14 @@ import { SongEditorModal } from './components/SongEditorModal';
 import { ReaderView } from './components/ReaderView';
 import { BackupModal } from './components/BackupModal';
 
+const ACTIVE_SEDE_STORAGE_KEY = 'app_lyrics_active_sede';
+
 export function App() {
   const [activeTab, setActiveTab] = useState<'catalog' | 'setlists'>('catalog');
-  const [activeSedeId, setActiveSedeId] = useState<string>('general');
+  const [activeSedeId, setActiveSedeId] = useState<string>(() => {
+    return localStorage.getItem(ACTIVE_SEDE_STORAGE_KEY) || 'general';
+  });
+  const [songContextSedeId, setSongContextSedeId] = useState<string | null>(null);
   const [selectedSongId, setSelectedSongId] = useState<string>('sublime-gracia');
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
   const [isProjectionMode, setIsProjectionMode] = useState<boolean>(false);
@@ -39,9 +51,15 @@ export function App() {
   const [isEditorOpen, setIsEditorOpen] = useState<boolean>(false);
   const [songToEdit, setSongToEdit] = useState<BaseSong | null>(null);
   const [isBackupModalOpen, setIsBackupModalOpen] = useState<boolean>(false);
+  const [sedesList, setSedesList] = useState<SedeProfile[]>(() => getStoredSedes(SEDES_LIST));
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(() => getLastSyncAt());
   const [isMusicianMode, setIsMusicianMode] = useState<boolean>(() => {
     return localStorage.getItem('app_lyrics_musician_mode') === 'true';
   });
+
+  const activeSedeRef = useRef(activeSedeId);
+  activeSedeRef.current = activeSedeId;
 
   const toggleMusicianMode = () => {
     const nextMode = !isMusicianMode;
@@ -49,13 +67,54 @@ export function App() {
     localStorage.setItem('app_lyrics_musician_mode', nextMode.toString());
   };
 
-  // Inicializar base de datos IndexedDB en primer montaje
+  const runSync = useCallback(async (targetSedeId: string, force: boolean = false) => {
+    if (!navigator.onLine) {
+      setSyncStatus('offline');
+      return;
+    }
+
+    setSyncStatus('syncing');
+    const result = await syncCatalogAndSede(targetSedeId, { force });
+    if (result.sedes && result.sedes.length > 0) {
+      setSedesList(result.sedes);
+    }
+    setLastSyncAt(getLastSyncAt());
+    setSyncStatus(result.status);
+  }, []);
+
+  const handleSelectSede = useCallback(async (nextSedeId: string) => {
+    setActiveSedeId(nextSedeId);
+    setSongContextSedeId(null);
+    localStorage.setItem(ACTIVE_SEDE_STORAGE_KEY, nextSedeId);
+
+    if (nextSedeId !== 'general' && navigator.onLine) {
+      setSyncStatus('syncing');
+      const result = await syncSedeFromGitHub(nextSedeId);
+      setLastSyncAt(getLastSyncAt());
+      setSyncStatus(result.status);
+    }
+  }, []);
+
+  // Inicializar base de datos IndexedDB en primer montaje y sincronizar desde GitHub
   useEffect(() => {
-    initializeDatabase().catch(err => console.error('Error al iniciar BD local:', err));
+    initializeDatabase()
+      .then(() => {
+        if (navigator.onLine) {
+          return runSync(activeSedeRef.current);
+        }
+      })
+      .catch(err => console.error('Error al iniciar BD local:', err));
+
     checkAndRequestStoragePersistence().catch(err => console.warn('Error al verificar persistencia:', err));
 
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => {
+      setIsOnline(true);
+      runSync(activeSedeRef.current).catch(err => console.warn('Error al re-sincronizar:', err));
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setSyncStatus('offline');
+    };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -68,7 +127,21 @@ export function App() {
         if (importedSetlist) {
           await db.setlists.put(importedSetlist);
           setActiveTab('setlists');
-          setImportNotification(`¡Repertorio "${importedSetlist.name}" importado exitosamente!`);
+
+          let notification = `¡Repertorio "${importedSetlist.name}" importado exitosamente!`;
+          if (importedSetlist.sedeId && importedSetlist.sedeId !== 'general') {
+            if (navigator.onLine) {
+              const syncRes = await syncSedeFromGitHub(importedSetlist.sedeId);
+              if (syncRes.status === 'synced') {
+                setLastSyncAt(getLastSyncAt());
+                notification = `¡Repertorio "${importedSetlist.name}" importado y sincronizado!`;
+              }
+            } else {
+              notification = `¡Repertorio "${importedSetlist.name}" importado! (Sin conexión: usando catálogo local)`;
+            }
+          }
+
+          setImportNotification(notification);
           window.history.replaceState(null, '', window.location.pathname);
           setTimeout(() => setImportNotification(null), 5000);
         }
@@ -83,7 +156,7 @@ export function App() {
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('hashchange', checkSharedUrl);
     };
-  }, []);
+  }, [runSync]);
 
   // Consultas reactivas a IndexedDB con Dexie
   const songs = useLiveQuery(() => db.songs.toArray()) || [];
@@ -100,13 +173,19 @@ export function App() {
     );
   });
 
-  // Canción activa resuelta según sede seleccionada
+  // Canción activa resuelta según sede seleccionada (o sede origen si viene de un repertorio)
+  const effectiveSedeId = songContextSedeId || activeSedeId;
+  const effectiveSedeProfile = sedesList.find(s => s.id === effectiveSedeId);
   const activeBaseSong = songs.find(s => s.id === selectedSongId) || songs[0];
   const activeDisplaySong = activeBaseSong
-    ? resolveSongForDisplay(activeBaseSong, activeSedeId, overrides)
+    ? resolveSongForDisplay(activeBaseSong, activeSedeId, overrides, {
+        expectedSedeId: effectiveSedeId,
+        isSedeSynced: isSedeSynced(effectiveSedeId),
+        sedeLabel: effectiveSedeProfile?.name || effectiveSedeId
+      })
     : null;
 
-  const currentSedeProfile = SEDES_LIST.find(s => s.id === activeSedeId) || { name: 'Catálogo', shortName: 'General' };
+  const currentSedeProfile = sedesList.find(s => s.id === activeSedeId) || { name: 'Catálogo', shortName: 'General' };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col pb-16 lg:pb-0">
@@ -167,10 +246,14 @@ export function App() {
             {/* Selector de Sede */}
             <SedeSelector
               activeSedeId={activeSedeId}
-              onSelectSede={setActiveSedeId}
+              onSelectSede={handleSelectSede}
               isOnline={isOnline}
               isOpenControlled={isSedeModalOpenOnMobile ? true : undefined}
               onCloseControlled={() => setIsSedeModalOpenOnMobile(false)}
+              sedesList={sedesList}
+              syncStatus={syncStatus}
+              lastSyncAt={lastSyncAt}
+              onManualSync={() => runSync(activeSedeId, true)}
             />
 
             {/* Conmutador Global Modo Músico / Modo Lector */}
@@ -241,6 +324,7 @@ export function App() {
                       key={song.id}
                       onClick={() => {
                         setSelectedSongId(song.id);
+                        setSongContextSedeId(null);
                         setMobileView('detail');
                       }}
                       className={`group p-3 rounded-xl cursor-pointer transition-all flex items-center justify-between active:scale-[0.99] ${
@@ -313,7 +397,7 @@ export function App() {
                 isMusicianMode ? (
                   <MusicianView
                     song={activeDisplaySong}
-                    activeSedeId={activeSedeId}
+                    activeSedeId={effectiveSedeId}
                     onEnterProjection={() => setIsProjectionMode(true)}
                     onSongUpdated={() => {}}
                     onBackToCatalog={() => setMobileView('list')}
@@ -355,8 +439,9 @@ export function App() {
             savedSetlists={setlists}
             isMusicianMode={isMusicianMode}
             onOpenBackup={() => setIsBackupModalOpen(true)}
-            onSelectSong={songId => {
+            onSelectSong={(songId, sourceSedeId) => {
               setSelectedSongId(songId);
+              setSongContextSedeId(sourceSedeId || null);
               setActiveTab('catalog');
               setMobileView('detail');
             }}

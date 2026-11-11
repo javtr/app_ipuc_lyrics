@@ -1,5 +1,7 @@
 import { BaseSong, SedeSongOverride } from '../types';
 
+const SEED_TIMESTAMP = '2026-01-01T00:00:00.000Z';
+
 export const SEED_SONGS: BaseSong[] = [
   {
     id: 'sublime-gracia',
@@ -9,7 +11,8 @@ export const SEED_SONGS: BaseSong[] = [
     bpm: 72,
     timeSignature: '3/4',
     tags: ['Himno', 'Adoración', 'Gracia'],
-    updatedAt: new Date().toISOString(),
+    updatedAt: SEED_TIMESTAMP,
+    syncSource: 'seed',
     sections: [
       {
         id: 'v1',
@@ -54,7 +57,8 @@ export const SEED_SONGS: BaseSong[] = [
     bpm: 68,
     timeSignature: '4/4',
     tags: ['Himno', 'Majestad', 'Adoración'],
-    updatedAt: new Date().toISOString(),
+    updatedAt: SEED_TIMESTAMP,
+    syncSource: 'seed',
     sections: [
       {
         id: 'v1',
@@ -88,7 +92,8 @@ export const SEED_SONGS: BaseSong[] = [
     bpm: 70,
     timeSignature: '4/4',
     tags: ['Alabanza', 'Gratitud', 'Contemporánea'],
-    updatedAt: new Date().toISOString(),
+    updatedAt: SEED_TIMESTAMP,
+    syncSource: 'seed',
     sections: [
       {
         id: 'v1',
@@ -126,7 +131,8 @@ export const SEED_OVERRIDES: SedeSongOverride[] = [
     customTitle: 'Sublime Gracia (Versión Acústica Palestina)',
     customKey: 'A', // Tono preferido de la sede
     localNotes: 'Entrada instrumental con guitarra acústica y pad suave. Repetir coro 2 veces al final.',
-    updatedAt: new Date().toISOString(),
+    updatedAt: SEED_TIMESTAMP,
+    syncSource: 'seed',
     customSections: [
       {
         id: 'v1',
