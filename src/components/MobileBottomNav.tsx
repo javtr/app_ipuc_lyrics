@@ -15,7 +15,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   activeSedeName
 }) => {
   return (
-    <nav className="lg:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-950/95 backdrop-blur-lg border-t border-slate-800 safe-bottom">
+    <nav className="lg:hidden relative z-30 mt-auto bg-slate-950/95 backdrop-blur-lg border-t border-slate-800 safe-bottom">
       <div className="grid grid-cols-3 h-16 max-w-lg mx-auto">
         <button
           onClick={() => onSelectTab('catalog')}

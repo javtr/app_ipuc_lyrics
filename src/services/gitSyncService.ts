@@ -1,5 +1,6 @@
 import { db } from '../db';
 import { GIT_CONFIG, getRawFileUrl, getSedeBranch } from '../config/gitConfig';
+import { normalizeSearchText } from './songEditorHelper';
 import {
   BaseSong,
   SedeProfile,
@@ -11,7 +12,8 @@ import {
 const STORAGE_KEYS = {
   lastSync: 'app_lyrics_last_sync',
   syncedSedes: 'app_lyrics_synced_sedes',
-  sedesCache: 'app_lyrics_sedes_cache'
+  sedesCache: 'app_lyrics_sedes_cache',
+  customSedes: 'app_lyrics_custom_sedes'
 } as const;
 
 interface SyncableTable<T extends { id: string; updatedAt: string; syncSource?: SyncSource }> {
@@ -50,7 +52,8 @@ function isValidBaseSong(item: unknown): item is BaseSong {
     candidate.id.trim().length > 0 &&
     typeof candidate.title === 'string' &&
     candidate.title.trim().length > 0 &&
-    Array.isArray(candidate.sections)
+    Array.isArray(candidate.sections) &&
+    candidate.sections.every(sec => sec && typeof sec === 'object' && Array.isArray(sec.lines))
   );
 }
 
@@ -145,24 +148,72 @@ async function fetchJsonFromGit<T>(
   return { status: response.status, data };
 }
 
+function mergeSedesLists(primary: SedeProfile[], custom: SedeProfile[]): SedeProfile[] {
+  const merged = [...primary];
+  for (const extra of custom) {
+    if (!merged.some(item => item.id === extra.id)) {
+      merged.push(extra);
+    }
+  }
+  return merged;
+}
+
 /**
- * Retorna la lista cacheada de sedes descargadas desde GitHub o el respaldo local.
+ * Normaliza el nombre de una congregación a un identificador URL-safe sin tildes ni guiones extremos.
+ */
+export function normalizeSedeSlug(rawName: string): string {
+  const normalized = normalizeSearchText(rawName)
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return normalized || `local-${Date.now()}`;
+}
+
+/**
+ * Retorna las sedes creadas localmente por el usuario en este dispositivo.
+ */
+export function getCustomSedes(): SedeProfile[] {
+  const raw = readStorage(STORAGE_KEYS.customSedes);
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(isValidSedeProfile) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persiste localmente una nueva sede creada en este dispositivo para que sobreviva recargas y sincronizaciones.
+ */
+export function saveCustomSede(profile: SedeProfile): SedeProfile[] {
+  const current = getCustomSedes();
+  const next = mergeSedesLists(current, [profile]);
+  writeStorage(STORAGE_KEYS.customSedes, JSON.stringify(next));
+  return next;
+}
+
+/**
+ * Retorna la lista cacheada de sedes descargadas desde GitHub combinada con sedes locales personalizadas.
  */
 export function getStoredSedes(fallbackSedes: SedeProfile[]): SedeProfile[] {
+  const customSedes = getCustomSedes();
   const raw = readStorage(STORAGE_KEYS.sedesCache);
-  if (!raw) return fallbackSedes;
+  if (!raw) return mergeSedesLists(fallbackSedes, customSedes);
 
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       const valid = parsed.filter(isValidSedeProfile);
-      if (valid.length > 0) return valid;
+      if (valid.length > 0) {
+        return mergeSedesLists(valid, customSedes);
+      }
     }
   } catch {
     // Fallback al listado base si el caché está corrupto
   }
 
-  return fallbackSedes;
+  return mergeSedesLists(fallbackSedes, customSedes);
 }
 
 /**
@@ -230,7 +281,7 @@ export async function syncGeneralCatalog(options?: { force?: boolean }): Promise
         const validSedes = sedesRes.data.filter(isValidSedeProfile);
         if (validSedes.length > 0) {
           writeStorage(STORAGE_KEYS.sedesCache, JSON.stringify(validSedes));
-          syncedSedesList = validSedes;
+          syncedSedesList = mergeSedesLists(validSedes, getCustomSedes());
         }
       }
     } catch {

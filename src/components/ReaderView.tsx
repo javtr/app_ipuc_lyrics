@@ -1,10 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Play, 
-  Pause, 
-  Maximize2, 
-  ArrowLeft, 
-  Music, 
+import React, { useState } from 'react';
+import {
+  Maximize2,
+  ArrowLeft,
   Type,
   Sparkles,
   Edit3
@@ -12,13 +9,16 @@ import {
 import { DisplaySong } from '../types';
 import { getCleanLyrics } from '../services/chordParser';
 import { FallbackNoticeBanner } from './FallbackNoticeBanner';
+import { ReportChangesButton } from './ReportChangesButton';
+import { SetlistNavControls, SetlistNavProps } from './SetlistNavControls';
 
 interface ReaderViewProps {
   song: DisplaySong;
-  onSwitchToChords?: () => void;
+  setlistNav?: SetlistNavProps;
   onEnterProjection: () => void;
   onBackToCatalog?: () => void;
   onEditSong?: () => void;
+  onReportCorrection?: () => void;
 }
 
 type ReaderFontSize = 'sm' | 'base' | 'lg' | 'xl' | '2xl';
@@ -33,30 +33,13 @@ const READER_FONT_CLASSES: Record<ReaderFontSize, string> = {
 
 export const ReaderView: React.FC<ReaderViewProps> = ({
   song,
-  onSwitchToChords,
+  setlistNav,
   onEnterProjection,
   onBackToCatalog,
-  onEditSong
+  onEditSong,
+  onReportCorrection
 }) => {
   const [fontSize, setFontSize] = useState<ReaderFontSize>('base');
-  const [isAutoScrolling, setIsAutoScrolling] = useState<boolean>(false);
-  const [scrollSpeed, setScrollSpeed] = useState<number>(2);
-  const scrollIntervalRef = useRef<number | null>(null);
-
-  // Auto-scroll suave para cantar sin tocar la pantalla
-  useEffect(() => {
-    if (isAutoScrolling) {
-      scrollIntervalRef.current = window.setInterval(() => {
-        window.scrollBy({ top: scrollSpeed, behavior: 'smooth' });
-      }, 50);
-    } else if (scrollIntervalRef.current) {
-      clearInterval(scrollIntervalRef.current);
-    }
-
-    return () => {
-      if (scrollIntervalRef.current) clearInterval(scrollIntervalRef.current);
-    };
-  }, [isAutoScrolling, scrollSpeed]);
 
   const increaseFontSize = () => {
     const sizes: ReaderFontSize[] = ['sm', 'base', 'lg', 'xl', '2xl'];
@@ -71,7 +54,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
   };
 
   return (
-    <div className="max-w-3xl mx-auto pb-32">
+    <div className="max-w-3xl mx-auto pb-8">
       {/* Botón de Retorno para Móviles */}
       {onBackToCatalog && (
         <div className="lg:hidden mb-3">
@@ -85,58 +68,38 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         </div>
       )}
 
-      {/* Barra de Herramientas del Lector (Limpia y Compacta) */}
-      <div className="sticky top-14 sm:top-16 z-30 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-2xl p-2.5 sm:p-3.5 mb-5 shadow-xl flex items-center justify-between gap-2">
-        {/* Controles de Tamaño de Letra */}
-        <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl overflow-hidden shrink-0">
-          <button
-            onClick={decreaseFontSize}
-            title="Reducir tamaño de letra"
-            disabled={fontSize === 'sm'}
-            className="px-2.5 py-1.5 text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-30 transition-colors"
-          >
-            A-
-          </button>
-          <span className="px-1 text-[10px] text-slate-500 hidden sm:inline">
-            <Type className="w-3.5 h-3.5 inline" />
-          </span>
-          <button
-            onClick={increaseFontSize}
-            title="Aumentar tamaño de letra"
-            disabled={fontSize === '2xl'}
-            className="px-2.5 py-1.5 text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-30 transition-colors"
-          >
-            A+
-          </button>
+      {/* Barra de Herramientas del Lector (Limpia y Compacta en Una Sola Fila) */}
+      <div className="sticky top-2 z-30 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-2xl p-2 sm:p-3.5 mb-5 shadow-xl flex items-center justify-between gap-1.5 sm:gap-2 flex-nowrap">
+        {/* Grupo Izquierdo: Tamaño de Letra + Navegación de Repertorio */}
+        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 shrink-0">
+          {/* Controles de Tamaño de Letra */}
+          <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl overflow-hidden shrink-0">
+            <button
+              onClick={decreaseFontSize}
+              title="Reducir tamaño de letra"
+              disabled={fontSize === 'sm'}
+              className="px-2 py-1 sm:px-2.5 sm:py-1.5 text-[11px] sm:text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-30 transition-colors"
+            >
+              A-
+            </button>
+            <span className="px-1 text-[10px] text-slate-500 hidden sm:inline">
+              <Type className="w-3.5 h-3.5 inline" />
+            </span>
+            <button
+              onClick={increaseFontSize}
+              title="Aumentar tamaño de letra"
+              disabled={fontSize === '2xl'}
+              className="px-2 py-1 sm:px-2.5 sm:py-1.5 text-[11px] sm:text-xs font-bold text-slate-300 hover:bg-slate-800 disabled:opacity-30 transition-colors"
+            >
+              A+
+            </button>
+          </div>
+
+          {setlistNav && <SetlistNavControls {...setlistNav} />}
         </div>
 
-        {/* Auto-Scroll y Proyección */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Botón Auto-Scroll */}
-          <button
-            onClick={() => setIsAutoScrolling(!isAutoScrolling)}
-            className={`flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-              isAutoScrolling
-                ? 'bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-950'
-                : 'bg-slate-950 text-slate-300 border-slate-700 hover:bg-slate-800'
-            }`}
-          >
-            {isAutoScrolling ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-            <span className="hidden xs:inline">Auto-Scroll</span>
-          </button>
-
-          {isAutoScrolling && (
-            <input
-              type="range"
-              min="1"
-              max="5"
-              value={scrollSpeed}
-              onChange={e => setScrollSpeed(Number(e.target.value))}
-              title="Velocidad de scroll"
-              className="w-12 sm:w-16 accent-emerald-500 cursor-pointer"
-            />
-          )}
-
+        {/* Proyección y Edición */}
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           {/* Proyector */}
           <button
             onClick={onEnterProjection}
@@ -147,27 +110,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             <span className="hidden sm:inline">Proyección</span>
           </button>
 
-          {/* Botón de Editar Letra Lírica */}
+          {/* Botón de Editar Letra (Solo Ícono) */}
           {onEditSong && (
             <button
               onClick={onEditSong}
               title="Editar letra de la canción"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-xl text-xs font-semibold shadow-sm transition-colors"
+              aria-label="Editar letra de la canción"
+              className="p-1.5 sm:p-2 bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-xl shadow-sm transition-colors"
             >
-              <Edit3 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Editar Letra</span>
-            </button>
-          )}
-
-          {/* Conmutador a Modo Músico (opcional) */}
-          {onSwitchToChords && (
-            <button
-              onClick={onSwitchToChords}
-              title="Ver acordes para músicos"
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-emerald-600/40 text-emerald-300 rounded-xl text-xs font-semibold shadow-sm transition-colors"
-            >
-              <Music className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Ver Acordes</span>
+              <Edit3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
             </button>
           )}
         </div>
@@ -187,12 +138,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
             </span>
           )}
         </div>
-
-        {song.artist && (
-          <p className="text-xs sm:text-sm text-slate-400">
-            Autor / Artista: <strong className="text-slate-200">{song.artist}</strong>
-          </p>
-        )}
 
         <FallbackNoticeBanner message={song.fallbackNotice} />
       </div>
@@ -241,6 +186,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           );
         })}
       </div>
+
+      <ReportChangesButton onClick={onReportCorrection} />
     </div>
   );
 };

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Church, Wifi, WifiOff, Plus, Check, X, RefreshCw } from 'lucide-react';
 import { SedeProfile, SyncStatus } from '../types';
+import { normalizeSedeSlug, saveCustomSede } from '../services/gitSyncService';
 
 interface SedeSelectorProps {
   activeSedeId: string;
@@ -69,16 +70,20 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
 
   const handleCreateSede = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSedeName.trim()) return;
+    const cleanName = newSedeName.trim();
+    if (!cleanName) return;
 
-    const id = `sede-${newSedeName.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+    const slug = normalizeSedeSlug(cleanName);
+    const id = slug.startsWith('sede-') ? slug : `sede-${slug}`;
+    const displayName = /^sede\b/i.test(cleanName) ? cleanName : `Sede ${cleanName}`;
     const newProfile: SedeProfile = {
       id,
-      name: `Sede ${newSedeName}`,
-      shortName: newSedeName
+      name: displayName,
+      shortName: cleanName
     };
 
-    setSedes([...sedes, newProfile]);
+    saveCustomSede(newProfile);
+    setSedes(prev => (prev.some(s => s.id === id) ? prev : [...prev, newProfile]));
     onSelectSede(id);
     setNewSedeName('');
     setShowAddModal(false);
@@ -105,13 +110,13 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
         className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-slate-500 text-slate-200 text-xs font-medium transition-colors shrink-0"
       >
         <Church className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400 shrink-0" />
-        <span className="max-w-[70px] xs:max-w-[100px] sm:max-w-[160px] truncate">
+        <span className="max-w-[90px] sm:max-w-[160px] truncate">
           {currentSede.shortName || currentSede.name.replace('Catálogo ', '')}
         </span>
       </button>
 
       {/* Modal / Bottom Sheet renderizado fuera del header con React Portal */}
-      {isOpen && createPortal(
+      {isOpen && typeof document !== 'undefined' && createPortal(
         <div 
           onClick={() => setIsOpen(false)}
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200"
@@ -209,7 +214,7 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
       )}
 
       {/* Modal para Crear Nueva Sede renderizado con React Portal */}
-      {showAddModal && createPortal(
+      {showAddModal && typeof document !== 'undefined' && createPortal(
         <div 
           onClick={() => setShowAddModal(false)}
           className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"

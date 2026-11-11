@@ -1,50 +1,133 @@
-import React, { useState } from 'react';
-import { 
-  ListMusic, 
-  Plus, 
-  Trash2, 
-  Share2, 
-  Copy, 
-  Check, 
-  ArrowUp, 
-  ArrowDown, 
+import React, { useState, useEffect } from 'react';
+import {
+  ListMusic,
+  Plus,
+  Trash2,
+  Share2,
+  Copy,
+  Check,
+  ArrowUp,
+  ArrowDown,
   Calendar,
   ExternalLink,
-  HardDrive
+  HardDrive,
+  Edit3,
+  AlertCircle
 } from 'lucide-react';
-import { BaseSong, Setlist, SetlistItem } from '../types';
-import { generateShareableUrl, generateWhatsAppLink } from '../services/urlSharing';
+import { BaseSong, SedeProfile, SedeSongOverride, Setlist, SetlistItem } from '../types';
+import {
+  copyTextToClipboard,
+  generateShareableUrl,
+  generateWhatsAppLink
+} from '../services/urlSharing';
+import { resolveSongForDisplay, isSongVisibleInSede } from '../services/songResolver';
 import { db } from '../db';
+
+export interface SetlistSelectionContext {
+  setlistId: string;
+  itemIndex: number;
+}
 
 interface SetlistManagerProps {
   songs: BaseSong[];
+  overrides?: SedeSongOverride[];
   activeSedeId: string;
+  sedesList?: SedeProfile[];
   savedSetlists: Setlist[];
   isMusicianMode?: boolean;
-  onSelectSong: (songId: string, sourceSedeId?: string) => void;
+  selectedSetlistId?: string | null;
+  onSelectSetlistId?: (setlistId: string | null) => void;
+  onSelectSong: (
+    songId: string,
+    sourceSedeId?: string,
+    itemKey?: string,
+    setlistContext?: SetlistSelectionContext
+  ) => void;
   onSetlistsUpdated: () => void;
   onOpenBackup?: () => void;
 }
 
 export const SetlistManager: React.FC<SetlistManagerProps> = ({
   songs,
+  overrides = [],
   activeSedeId,
+  sedesList = [],
   savedSetlists,
   isMusicianMode = false,
+  selectedSetlistId,
+  onSelectSetlistId,
   onSelectSong,
   onSetlistsUpdated,
   onOpenBackup
 }) => {
-  const [activeSetlistId, setActiveSetlistId] = useState<string | null>(
+  const [internalSetlistId, setInternalSetlistId] = useState<string | null>(
     savedSetlists[0]?.id || null
   );
+  const isControlledSetlist = selectedSetlistId !== undefined;
+  const activeSetlistId = isControlledSetlist ? selectedSetlistId : internalSetlistId;
+  const setActiveSetlistId = (nextId: string | null) => {
+    onSelectSetlistId?.(nextId);
+    if (!isControlledSetlist) {
+      setInternalSetlistId(nextId);
+    }
+  };
+
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [newSetName, setNewSetName] = useState('');
-  const [copiedLink, setCopiedLink] = useState(false);
-  const [selectedSongToAdd, setSelectedSongToAdd] = useState<string>(songs[0]?.id || '');
-  const [selectedKeyToAdd, setSelectedKeyToAdd] = useState<string>('G');
+  const [isRenamingSetlist, setIsRenamingSetlist] = useState(false);
+  const [renameSetName, setRenameSetName] = useState('');
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const initialSelectableSongs = songs.filter(s => isSongVisibleInSede(s, activeSedeId));
+  const [selectedSongToAdd, setSelectedSongToAdd] = useState<string>(
+    initialSelectableSongs[0]?.id || ''
+  );
+  const [selectedKeyToAdd, setSelectedKeyToAdd] = useState<string>(
+    initialSelectableSongs[0]?.originalKey || 'G'
+  );
+
+  const getSedeDisplayName = (sedeId: string) => {
+    if (!sedeId || sedeId === 'general') return 'Catálogo General';
+    return sedesList.find(s => s.id === sedeId)?.name || sedeId;
+  };
+
+  const getResolvedSongKey = (song: BaseSong, targetSedeId: string) => {
+    return resolveSongForDisplay(song, targetSedeId, overrides).key;
+  };
+
+  // Sincronizar selección cuando IndexedDB resuelve asíncronamente o se elimina una lista
+  useEffect(() => {
+    if (savedSetlists.length === 0) {
+      if (activeSetlistId !== null) setActiveSetlistId(null);
+      return;
+    }
+
+    if (!activeSetlistId || !savedSetlists.some(s => s.id === activeSetlistId)) {
+      setActiveSetlistId(savedSetlists[0].id);
+    }
+  }, [savedSetlists, activeSetlistId]);
 
   const currentSetlist = savedSetlists.find(s => s.id === activeSetlistId);
+  const effectiveListSedeId = currentSetlist?.sedeId || activeSedeId;
+  const selectableSongs = songs.filter(s => isSongVisibleInSede(s, effectiveListSedeId));
+
+  useEffect(() => {
+    if (selectableSongs.length === 0) {
+      if (selectedSongToAdd !== '') setSelectedSongToAdd('');
+      return;
+    }
+
+    const currentValid = selectableSongs.find(s => s.id === selectedSongToAdd);
+    if (!currentValid) {
+      const firstSong = selectableSongs[0];
+      setSelectedSongToAdd(firstSong.id);
+      setSelectedKeyToAdd(getResolvedSongKey(firstSong, effectiveListSedeId));
+    }
+  }, [songs, selectedSongToAdd, effectiveListSedeId, overrides]);
+
+  useEffect(() => {
+    setIsRenamingSetlist(false);
+    setCopyStatus('idle');
+  }, [activeSetlistId]);
 
   const handleCreateSetlist = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,14 +149,33 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
     onSetlistsUpdated();
   };
 
+  const handleRenameSetlist = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentSetlist || !renameSetName.trim()) return;
+
+    await db.setlists.update(currentSetlist.id, { name: renameSetName.trim() });
+    setIsRenamingSetlist(false);
+    onSetlistsUpdated();
+  };
+
+  const handleDeleteSetlist = async () => {
+    if (!currentSetlist) return;
+    if (!confirm(`¿Eliminar el repertorio "${currentSetlist.name}"?`)) return;
+
+    await db.setlists.delete(currentSetlist.id);
+    setActiveSetlistId(null);
+    onSetlistsUpdated();
+  };
+
   const handleAddSongToSetlist = async () => {
     if (!currentSetlist || !selectedSongToAdd) return;
     const song = songs.find(s => s.id === selectedSongToAdd);
     if (!song) return;
 
+    const fallbackKey = getResolvedSongKey(song, currentSetlist.sedeId);
     const newItem: SetlistItem = {
       songId: song.id,
-      key: selectedKeyToAdd || song.originalKey,
+      key: selectedKeyToAdd.trim() || fallbackKey,
       order: currentSetlist.items.length + 1
     };
 
@@ -108,12 +210,12 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
     onSetlistsUpdated();
   };
 
-  const handleShare = () => {
+  const handleShare = async () => {
     if (!currentSetlist) return;
     const shareUrl = generateShareableUrl(currentSetlist);
-    navigator.clipboard.writeText(shareUrl);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 3000);
+    const ok = await copyTextToClipboard(shareUrl);
+    setCopyStatus(ok ? 'copied' : 'error');
+    setTimeout(() => setCopyStatus('idle'), 3500);
   };
 
   const shareUrl = currentSetlist ? generateShareableUrl(currentSetlist) : '';
@@ -161,7 +263,7 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
               className={`px-3 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-2 border ${
                 set.id === activeSetlistId
                   ? 'bg-slate-800 text-emerald-300 border-emerald-600/50 shadow-sm'
-                  : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-850'
+                  : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800/80'
               }`}
             >
               <span>{set.name}</span>
@@ -183,11 +285,58 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
       {currentSetlist && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-800">
-            <div>
-              <h3 className="text-xl font-bold text-white">{currentSetlist.name}</h3>
-              <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-1">
+            <div className="space-y-1">
+              {isRenamingSetlist ? (
+                <form onSubmit={handleRenameSetlist} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    required
+                    value={renameSetName}
+                    onChange={e => setRenameSetName(e.target.value)}
+                    className="px-2.5 py-1 bg-slate-950 border border-emerald-500 rounded-lg text-sm font-bold text-white focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold"
+                  >
+                    Guardar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsRenamingSetlist(false)}
+                    className="px-2 py-1 text-xs text-slate-400 hover:text-white"
+                  >
+                    Cancelar
+                  </button>
+                </form>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xl font-bold text-white">{currentSetlist.name}</h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRenameSetName(currentSetlist.name);
+                      setIsRenamingSetlist(true);
+                    }}
+                    title="Renombrar repertorio"
+                    className="p-1 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeleteSetlist}
+                    title="Eliminar repertorio"
+                    className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-950/50 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              <p className="text-xs text-slate-400 flex items-center gap-1.5">
                 <Calendar className="w-3.5 h-3.5" />
-                Fecha: {currentSetlist.date} • Sede: {currentSetlist.sedeId}
+                Fecha: {currentSetlist.date} • {getSedeDisplayName(currentSetlist.sedeId)}
               </p>
             </div>
 
@@ -198,8 +347,20 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
                 className="flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-800 border border-slate-700 rounded-xl text-xs font-semibold text-slate-200 transition-colors"
                 title="Copiar enlace comprimido al portapapeles"
               >
-                {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                <span>{copiedLink ? '¡Enlace Copiado!' : 'Copiar Enlace'}</span>
+                {copyStatus === 'copied' ? (
+                  <Check className="w-4 h-4 text-emerald-400" />
+                ) : copyStatus === 'error' ? (
+                  <AlertCircle className="w-4 h-4 text-amber-400" />
+                ) : (
+                  <Copy className="w-4 h-4" />
+                )}
+                <span>
+                  {copyStatus === 'copied'
+                    ? '¡Enlace Copiado!'
+                    : copyStatus === 'error'
+                      ? 'Usa WhatsApp para compartir'
+                      : 'Copiar Enlace'}
+                </span>
               </button>
 
               <a
@@ -227,6 +388,12 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
             ) : (
               currentSetlist.items.map((item, idx) => {
                 const song = songs.find(s => s.id === item.songId);
+                const resolved = song
+                  ? resolveSongForDisplay(song, currentSetlist.sedeId, overrides, {
+                      sedeLabel: getSedeDisplayName(currentSetlist.sedeId)
+                    })
+                  : null;
+
                 return (
                   <div
                     key={`${item.songId}_${idx}`}
@@ -238,10 +405,20 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
                       </span>
                       <div>
                         <button
-                          onClick={() => onSelectSong(item.songId, currentSetlist.sedeId)}
+                          onClick={() =>
+                            onSelectSong(item.songId, currentSetlist.sedeId, item.key, {
+                              setlistId: currentSetlist.id,
+                              itemIndex: idx
+                            })
+                          }
                           className="text-sm font-semibold text-white hover:text-emerald-400 text-left transition-colors flex items-center gap-1.5"
                         >
-                          <span>{song?.title || item.songId}</span>
+                          <span>{resolved?.title || song?.title || item.songId}</span>
+                          {!song && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-800">
+                              Sin descargar
+                            </span>
+                          )}
                           <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
                         </button>
                         {isMusicianMode && (
@@ -257,7 +434,7 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
                         onClick={() => handleMoveItem(idx, 'up')}
                         disabled={idx === 0}
                         title="Subir en el orden"
-                        className="p-1.5 rounded-lg hover:bg-slate-850 text-slate-400 hover:text-white disabled:opacity-20"
+                        className="p-1.5 rounded-lg hover:bg-slate-800/80 text-slate-400 hover:text-white disabled:opacity-20"
                       >
                         <ArrowUp className="w-4 h-4" />
                       </button>
@@ -265,7 +442,7 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
                         onClick={() => handleMoveItem(idx, 'down')}
                         disabled={idx === currentSetlist.items.length - 1}
                         title="Bajar en el orden"
-                        className="p-1.5 rounded-lg hover:bg-slate-850 text-slate-400 hover:text-white disabled:opacity-20"
+                        className="p-1.5 rounded-lg hover:bg-slate-800/80 text-slate-400 hover:text-white disabled:opacity-20"
                       >
                         <ArrowDown className="w-4 h-4" />
                       </button>
@@ -291,16 +468,21 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
                 value={selectedSongToAdd}
                 onChange={e => {
                   setSelectedSongToAdd(e.target.value);
-                  const song = songs.find(s => s.id === e.target.value);
-                  if (song) setSelectedKeyToAdd(song.originalKey);
+                  const song = selectableSongs.find(s => s.id === e.target.value);
+                  if (song) {
+                    setSelectedKeyToAdd(getResolvedSongKey(song, currentSetlist.sedeId));
+                  }
                 }}
                 className="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500"
               >
-                {songs.map(s => (
-                  <option key={s.id} value={s.id}>
-                    {s.title} {isMusicianMode ? `(${s.originalKey})` : ''}
-                  </option>
-                ))}
+                {selectableSongs.map(s => {
+                  const songKey = getResolvedSongKey(s, currentSetlist.sedeId);
+                  return (
+                    <option key={s.id} value={s.id}>
+                      {s.title} {isMusicianMode ? `(${songKey})` : ''}
+                    </option>
+                  );
+                })}
               </select>
 
               {isMusicianMode && (
@@ -308,14 +490,15 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
                   type="text"
                   placeholder="Tono"
                   value={selectedKeyToAdd}
-                  onChange={e => setSelectedKeyToAdd(e.target.value.toUpperCase())}
+                  onChange={e => setSelectedKeyToAdd(e.target.value)}
                   className="w-20 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white text-center focus:outline-none focus:border-emerald-500"
                 />
               )}
 
               <button
                 onClick={handleAddSongToSetlist}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition-colors shrink-0"
+                disabled={!selectedSongToAdd}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition-colors shrink-0 disabled:opacity-40"
               >
                 Agregar
               </button>
@@ -326,8 +509,14 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
 
       {/* Modal Nuevo Repertorio */}
       {isCreatingNew && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+        <div
+          onClick={() => setIsCreatingNew(false)}
+          className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl"
+          >
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
               <Plus className="w-5 h-5 text-emerald-400" />
               Nuevo Repertorio de Culto

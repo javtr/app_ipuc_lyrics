@@ -28,6 +28,8 @@ export interface BaseSong {
   timeSignature?: string;
   sections: SongSection[];
   tags?: string[];
+  sedeId?: string;
+  notes?: string;
   updatedAt: string;
   syncSource?: SyncSource;
 }

@@ -1,24 +1,47 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { 
-  X, 
-  Save, 
-  Eye, 
+import {
+  X,
+  Save,
+  Eye,
   Music,
-  AlignLeft
+  AlertTriangle,
+  Trash2,
+  RotateCcw,
+  Minus,
+  Plus
 } from 'lucide-react';
 import { BaseSong, SedeSongOverride, SongSection } from '../types';
 import { serializeSectionsToText, parseTextToSections } from '../services/chordSerializer';
-import { parseChordProLine, getCleanLyrics } from '../services/chordParser';
+import {
+  getCleanLyrics,
+  getSemitoneDifference,
+  transposeChord,
+  transposeChordProText
+} from '../services/chordParser';
+import {
+  buildOverrideTitle,
+  generateUniqueSongSlug,
+  hasChordAnnotations,
+  restoreChordsInEditedSections
+} from '../services/songEditorHelper';
 import { db } from '../db';
+import { ChordProLineView } from './ChordProLineView';
 
 interface SongEditorModalProps {
   isOpen: boolean;
   initialSong?: BaseSong | null;
+  originalSongTitle?: string;
+  initialNotes?: string;
+  hasLocalOverride?: boolean;
   activeSedeId: string;
+  activeSedeLabel?: string;
   isMusicianMode: boolean;
+  existingSongIds?: string[];
   onClose: () => void;
   onSave: (savedSong: BaseSong) => void;
+  onDeleteSong?: (songId: string) => Promise<void> | void;
+  onRestoreOverride?: (songId: string) => Promise<void> | void;
 }
 
 const COMMON_CHORDS = [
@@ -28,53 +51,66 @@ const COMMON_CHORDS = [
 const CHORD_EXTENSIONS = ['7', 'm7', 'sus4', 'maj7', '/B', '/F#'];
 
 const CHORD_KEYS = [
-  'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'
+  'C', 'C#', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B',
+  'Am', 'Bm', 'Cm', 'C#m', 'Dm', 'Em', 'F#m', 'Gm'
 ];
 
 export const SongEditorModal: React.FC<SongEditorModalProps> = ({
   isOpen,
   initialSong,
+  originalSongTitle,
+  initialNotes,
+  hasLocalOverride = false,
   activeSedeId,
+  activeSedeLabel,
   isMusicianMode,
+  existingSongIds = [],
   onClose,
-  onSave
+  onSave,
+  onDeleteSong,
+  onRestoreOverride
 }) => {
   const [title, setTitle] = useState('');
-  const [artist, setArtist] = useState('');
   const [originalKey, setOriginalKey] = useState('G');
   const [bpm, setBpm] = useState<number | ''>(72);
   const [timeSignature, setTimeSignature] = useState('4/4');
   const [rawText, setRawText] = useState('');
-  const [saveTarget, setSaveTarget] = useState<'general' | 'sede'>('general');
+  const [localNotes, setLocalNotes] = useState('');
   const [mobileTab, setMobileTab] = useState<'edit' | 'preview'>('edit');
   const [customChordInput, setCustomChordInput] = useState('');
+  const [hasOriginalChords, setHasOriginalChords] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const originalSectionsRef = useRef<SongSection[]>([]);
 
   // Cargar datos al abrir el modal
   useEffect(() => {
     if (initialSong) {
       setTitle(initialSong.title);
-      setArtist(initialSong.artist || '');
       setOriginalKey(initialSong.originalKey);
       setBpm(initialSong.bpm || '');
       setTimeSignature(initialSong.timeSignature || '4/4');
+      setLocalNotes(initialNotes || '');
+
+      originalSectionsRef.current = initialSong.sections;
+      setHasOriginalChords(hasChordAnnotations(initialSong.sections));
 
       const serialized = serializeSectionsToText(initialSong.sections);
       if (!isMusicianMode) {
-        // En modo normal/lector, remover corchetes de acordes para que el usuario edite solo texto limpio
+        // En modo lector, ocultar corchetes para facilitar corrección de texto sin romper el diseño limpio
         setRawText(serialized.replace(/\[[^\]]+\]/g, ''));
       } else {
         setRawText(serialized);
       }
-      setSaveTarget(activeSedeId !== 'general' ? 'sede' : 'general');
     } else {
       // Plantilla para nueva canción
       setTitle('');
-      setArtist('');
       setOriginalKey('G');
       setBpm(72);
       setTimeSignature('4/4');
+      setLocalNotes('');
+      originalSectionsRef.current = [];
+      setHasOriginalChords(false);
 
       if (!isMusicianMode) {
         setRawText(`{verse: Verso 1}
@@ -93,12 +129,15 @@ Por siempre y para siempre`);
 [C]¡Alabado sea el [G]Señor!
 [D]Por siempre y para [G]siempre`);
       }
-      setSaveTarget(activeSedeId !== 'general' ? 'sede' : 'general');
     }
     setMobileTab('edit');
-  }, [initialSong, activeSedeId, isOpen, isMusicianMode]);
+  }, [initialSong, initialNotes, activeSedeId, isOpen, isMusicianMode]);
 
   if (!isOpen) return null;
+
+  const availableKeyOptions = CHORD_KEYS.includes(originalKey)
+    ? CHORD_KEYS
+    : [originalKey, ...CHORD_KEYS];
 
   // Inserción en la posición del cursor
   const insertTextAtCursor = (textToInsert: string) => {
@@ -129,6 +168,38 @@ Por siempre y para siempre`);
 
   const previewSections: SongSection[] = parseTextToSections(rawText);
 
+  const isSedeExclusiveSong = Boolean(
+    activeSedeId !== 'general' && (!initialSong || initialSong.sedeId === activeSedeId)
+  );
+
+  const canDeleteLocalSong = Boolean(
+    initialSong && onDeleteSong && initialSong.syncSource === 'local'
+  );
+  const canRestoreOverride = Boolean(
+    initialSong &&
+      hasLocalOverride &&
+      onRestoreOverride &&
+      activeSedeId !== 'general' &&
+      !isSedeExclusiveSong &&
+      initialSong.syncSource !== 'local'
+  );
+
+  // Transponer automáticamente todos los acordes del texto al cambiar el selector de tonalidad
+  const handleOriginalKeyChange = (nextKey: string) => {
+    const semitones = getSemitoneDifference(originalKey, nextKey);
+    if (semitones !== 0) {
+      setRawText(prev => transposeChordProText(prev, semitones));
+    }
+    setOriginalKey(nextKey);
+  };
+
+  // Subir o bajar medio tono directo (acordes + tonalidad) al editar la canción
+  const handleStepKeySemitone = (delta: number) => {
+    const nextKey = transposeChord(originalKey, delta);
+    setRawText(prev => transposeChordProText(prev, delta));
+    setOriginalKey(nextKey);
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
@@ -136,116 +207,146 @@ Por siempre y para siempre`);
       return;
     }
 
-    const sections = parseTextToSections(rawText);
-    if (sections.length === 0) {
+    const parsedSections = parseTextToSections(rawText);
+    if (parsedSections.length === 0) {
       alert('Por favor escribe al menos una estrofa o sección.');
       return;
     }
 
-    const songId = initialSong
-      ? initialSong.id
-      : title.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+    // Proteger los acordes existentes en líneas cuyo texto limpio no cambió al editar en Modo Lector
+    const sections =
+      !isMusicianMode && originalSectionsRef.current.length > 0
+        ? restoreChordsInEditedSections(parsedSections, originalSectionsRef.current)
+        : parsedSections;
+
+    let songId = initialSong?.id;
+    if (!songId) {
+      const dbSongs = await db.songs.toArray();
+      const allIds = new Set([...existingSongIds, ...dbSongs.map(s => s.id)]);
+      songId = generateUniqueSongSlug(title, allIds);
+    }
+
+    const cleanTitle = title.trim();
+    const effectiveKey = isMusicianMode ? originalKey : (initialSong?.originalKey || 'G');
+    const nowIso = new Date().toISOString();
 
     const baseSongData: BaseSong = {
       id: songId,
-      title: title.trim(),
-      artist: artist.trim() || undefined,
-      originalKey: isMusicianMode ? originalKey : (initialSong?.originalKey || 'G'),
+      title: cleanTitle,
+      artist: initialSong?.artist,
+      originalKey: effectiveKey,
       bpm: isMusicianMode && typeof bpm === 'number' ? bpm : initialSong?.bpm,
       timeSignature: isMusicianMode ? timeSignature : (initialSong?.timeSignature || '4/4'),
       sections,
-      updatedAt: new Date().toISOString(),
-      syncSource: 'local'
+      tags: initialSong?.tags,
+      notes: isSedeExclusiveSong ? (localNotes.trim() || undefined) : initialSong?.notes,
+      sedeId: isSedeExclusiveSong ? activeSedeId : initialSong?.sedeId,
+      updatedAt: nowIso,
+      syncSource: initialSong?.syncSource || 'local'
     };
 
-    if (saveTarget === 'sede' && activeSedeId !== 'general') {
+    if (!isSedeExclusiveSong && activeSedeId !== 'general') {
+      const overrideId = `${songId}_${activeSedeId}`;
+      const existingOverride = await db.overrides.get(overrideId);
+      const sedeReadable = activeSedeLabel || `Sede ${activeSedeId.replace(/^sede-/, '')}`;
+
       const override: SedeSongOverride = {
-        id: `${songId}_${activeSedeId}`,
+        id: overrideId,
         baseSongId: songId,
         sedeId: activeSedeId,
-        customTitle: `${title.trim()} (Versión ${activeSedeId.replace('sede-', '')})`,
-        customKey: isMusicianMode ? originalKey : (initialSong?.originalKey || 'G'),
+        customTitle: buildOverrideTitle(
+          cleanTitle,
+          originalSongTitle || initialSong?.title || cleanTitle,
+          sedeReadable,
+          existingOverride?.customTitle
+        ),
+        customKey: effectiveKey,
         customSections: sections,
-        updatedAt: new Date().toISOString(),
+        localNotes: localNotes.trim() || undefined,
+        updatedAt: nowIso,
         syncSource: 'local'
       };
 
       await db.overrides.put(override);
-
-      const exists = await db.songs.get(songId);
-      if (!exists) {
-        await db.songs.put(baseSongData);
-      }
     } else {
       await db.songs.put(baseSongData);
+      if (isSedeExclusiveSong) {
+        await db.overrides.delete(`${songId}_${activeSedeId}`);
+      }
     }
 
     onSave(baseSongData);
     onClose();
   };
 
-  return createPortal(
+  const handleDelete = async () => {
+    if (!initialSong || !onDeleteSong) return;
+    if (!confirm(`¿Eliminar "${initialSong.title}" de tu dispositivo?`)) return;
+    await onDeleteSong(initialSong.id);
+    onClose();
+  };
+
+  const handleRestoreOverrideClick = async () => {
+    if (!initialSong || !onRestoreOverride) return;
+    if (!confirm(`¿Restaurar "${initialSong.title}" a la versión general para esta sede?`)) return;
+    await onRestoreOverride(initialSong.id);
+    onClose();
+  };
+
+  const modalContent = (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-      <div 
+      <div
         onClick={e => e.stopPropagation()}
-        className="w-full max-w-4xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden animate-in zoom-in-95 duration-200"
+        className="w-full max-w-4xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col max-h-[90dvh] overflow-hidden animate-in zoom-in-95 duration-200"
       >
-        {/* Cabecera del Modal (Fija) */}
-        <div className="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            {isMusicianMode ? (
-              <Music className="w-5 h-5 text-emerald-400" />
-            ) : (
-              <AlignLeft className="w-5 h-5 text-emerald-400" />
+        {/* Formulario Principal con Cuerpo Scrollable y Barra Inferior Fija */}
+        <form onSubmit={handleSave} className="flex-1 min-h-0 flex flex-col">
+          <div className="p-3 sm:p-5 space-y-4 flex-1 min-h-0 overflow-y-auto">
+            {/* Barra Superior Desplazable: Pestañas móviles y botón Cerrar */}
+            <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
+              <div className="flex sm:hidden p-0.5 bg-slate-950 border border-slate-800 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => setMobileTab('edit')}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                    mobileTab === 'edit' ? 'bg-emerald-600 text-white' : 'text-slate-400'
+                  }`}
+                >
+                  Editar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileTab('preview')}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
+                    mobileTab === 'preview' ? 'bg-emerald-600 text-white' : 'text-slate-400'
+                  }`}
+                >
+                  Vista Previa
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={onClose}
+                title="Cerrar editor"
+                aria-label="Cerrar editor"
+                className="ml-auto p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            {!isMusicianMode && hasOriginalChords && (
+              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 text-[11px] sm:text-xs text-amber-200 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  Esta canción contiene acordes guardados. Las líneas cuya letra no modifiques conservarán sus acordes automáticamente; si reescribes una línea completa, usa <strong>Modo Músico</strong> para reubicar sus acordes.
+                </p>
+              </div>
             )}
-            <div>
-              <h2 className="text-sm sm:text-base font-bold text-white">
-                {initialSong ? `Editar: ${initialSong.title}` : 'Nueva Canción'}
-              </h2>
-              <span className="text-[10px] text-slate-400">
-                {isMusicianMode ? 'Modo Músico (Letra con Acordes)' : 'Modo Congregación (Solo Letra)'}
-              </span>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2">
-            {/* Pestañas de edición / vista previa en móviles */}
-            <div className="flex sm:hidden p-0.5 bg-slate-900 border border-slate-800 rounded-lg">
-              <button
-                type="button"
-                onClick={() => setMobileTab('edit')}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
-                  mobileTab === 'edit' ? 'bg-emerald-600 text-white' : 'text-slate-400'
-                }`}
-              >
-                Editar
-              </button>
-              <button
-                type="button"
-                onClick={() => setMobileTab('preview')}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
-                  mobileTab === 'preview' ? 'bg-emerald-600 text-white' : 'text-slate-400'
-                }`}
-              >
-                Vista Previa
-              </button>
-            </div>
-
-            <button
-              onClick={onClose}
-              className="p-1 rounded-lg text-slate-400 hover:text-white transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Formulario Principal con Scroll Vertical Unificado y Continuo */}
-        <form onSubmit={handleSave} className="flex-1 overflow-y-auto flex flex-col">
-          <div className="p-3 sm:p-5 space-y-4 flex-1">
             {/* Metadatos Básicos */}
-            <div className={`grid gap-3 ${isMusicianMode ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-1 sm:grid-cols-2'}`}>
-              <div>
+            <div className={`grid gap-3 ${isMusicianMode ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1'}`}>
+              <div className={isMusicianMode ? 'col-span-2 sm:col-span-1' : ''}>
                 <label className="block text-[11px] font-semibold text-slate-300 mb-1">Título de la Canción *</label>
                 <input
                   type="text"
@@ -257,31 +358,42 @@ Por siempre y para siempre`);
                 />
               </div>
 
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1">Artista o Autor (Opcional)</label>
-                <input
-                  type="text"
-                  value={artist}
-                  onChange={e => setArtist(e.target.value)}
-                  placeholder="Ej: John Newton / Himnario"
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
               {/* Campos de teoría musical (Solo visibles en Modo Músico) */}
               {isMusicianMode && (
                 <>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">Tono Original *</label>
-                    <select
-                      value={originalKey}
-                      onChange={e => setOriginalKey(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-emerald-400 font-bold focus:outline-none focus:border-emerald-500"
-                    >
-                      {CHORD_KEYS.map(k => (
-                        <option key={k} value={k}>{k}</option>
-                      ))}
-                    </select>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      {activeSedeId !== 'general' ? 'Tono en esta Sede *' : 'Tono Original *'}
+                    </label>
+                    <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl overflow-hidden focus-within:border-emerald-500">
+                      <button
+                        type="button"
+                        onClick={() => handleStepKeySemitone(-1)}
+                        title="Bajar medio tono"
+                        aria-label="Bajar medio tono"
+                        className="px-2 py-2 text-slate-300 hover:text-white hover:bg-slate-800 border-r border-slate-800 transition-colors shrink-0"
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </button>
+                      <select
+                        value={originalKey}
+                        onChange={e => handleOriginalKeyChange(e.target.value)}
+                        className="w-full min-w-0 px-1.5 py-2 bg-transparent text-xs sm:text-sm text-emerald-400 font-bold text-center focus:outline-none"
+                      >
+                        {availableKeyOptions.map(k => (
+                          <option key={k} value={k} className="bg-slate-950 text-white">{k}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => handleStepKeySemitone(1)}
+                        title="Subir medio tono"
+                        aria-label="Subir medio tono"
+                        className="px-2 py-2 text-slate-300 hover:text-white hover:bg-slate-800 border-l border-slate-800 transition-colors shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -315,9 +427,23 @@ Por siempre y para siempre`);
               )}
             </div>
 
+            {activeSedeId !== 'general' && (
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                  Notas de Arreglo para los Músicos (Sede)
+                </label>
+                <input
+                  type="text"
+                  value={localNotes}
+                  onChange={e => setLocalNotes(e.target.value)}
+                  placeholder="Ej: Entrada con guitarra acústica y pad suave..."
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            )}
+
             {/* Asistente de inserción táctil */}
             <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-xl space-y-2">
-              {/* Barra de acordes (SOLO si isMusicianMode === true) */}
               {isMusicianMode && (
                 <div className="space-y-1.5 pb-2 border-b border-slate-800">
                   <div className="flex items-center justify-between text-[11px] text-slate-400">
@@ -385,8 +511,8 @@ Por siempre y para siempre`);
                 </div>
               )}
 
-              {/* Atajos de secciones (Disponibles para todos) */}
-              <div className="flex items-center gap-2 pt-0.5">
+              {/* Atajos de secciones */}
+              <div className="flex flex-wrap items-center gap-2 pt-0.5">
                 <span className="text-[11px] text-slate-400 font-semibold uppercase">Añadir Sección:</span>
                 <button
                   type="button"
@@ -414,7 +540,6 @@ Por siempre y para siempre`);
 
             {/* Zona de Trabajo (Editor y Vista Previa) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Panel de Edición de Letra */}
               <div className={`flex flex-col space-y-1.5 ${mobileTab === 'preview' ? 'hidden sm:flex' : 'flex'}`}>
                 <div className="flex items-center justify-between text-xs text-slate-400">
                   <span className="font-semibold">Letra de la Canción:</span>
@@ -436,7 +561,6 @@ Por siempre y para siempre`);
                 />
               </div>
 
-              {/* Panel de Previsualización en Tiempo Real */}
               <div className={`flex flex-col space-y-1.5 ${mobileTab === 'edit' ? 'hidden sm:flex' : 'flex'}`}>
                 <div className="flex items-center gap-1.5 text-xs text-slate-400">
                   <Eye className="w-3.5 h-3.5 text-blue-400" />
@@ -448,11 +572,11 @@ Por siempre y para siempre`);
                     const isChorus = section.type === 'chorus';
 
                     return (
-                      <div 
-                        key={section.id} 
+                      <div
+                        key={section.id}
                         className={`p-2.5 rounded-lg border ${
-                          isChorus 
-                            ? 'bg-slate-900 border-l-4 border-emerald-500 border-slate-800' 
+                          isChorus
+                            ? 'bg-slate-900 border-l-4 border-emerald-500 border-slate-800'
                             : 'bg-slate-900/60 border-slate-800'
                         }`}
                       >
@@ -464,27 +588,15 @@ Por siempre y para siempre`);
 
                         <div className="space-y-1.5 text-xs">
                           {isMusicianMode ? (
-                            section.lines.map((line, idx) => {
-                              const tokens = parseChordProLine(line);
-                              return (
-                                <div key={idx} className="flex flex-wrap items-end gap-x-1.5 py-0.5">
-                                  {tokens.map((token, tIdx) => (
-                                    <span key={tIdx} className="inline-flex flex-col">
-                                      {token.chord ? (
-                                        <span className="text-[10px] font-bold text-emerald-400 leading-none">
-                                          {token.chord}
-                                        </span>
-                                      ) : (
-                                        <span className="h-2 leading-none select-none"></span>
-                                      )}
-                                      <span className="text-slate-200 whitespace-pre">
-                                        {token.text || ' '}
-                                      </span>
-                                    </span>
-                                  ))}
-                                </div>
-                              );
-                            })
+                            section.lines.map((line, idx) => (
+                              <ChordProLineView
+                                key={idx}
+                                line={line}
+                                chordClassName="text-[10px]"
+                                lyricClassName="text-xs"
+                                spacerHeightClass="h-2"
+                              />
+                            ))
                           ) : (
                             getCleanLyrics(section.lines).map((cleanLine, idx) => (
                               <p key={idx} className="text-slate-200 leading-relaxed whitespace-pre-wrap">
@@ -507,44 +619,56 @@ Por siempre y para siempre`);
             </div>
           </div>
 
-          {/* Barra Inferior de Guardado (Fija al Fondo del Modal) */}
-          <div className="p-3 sm:p-4 bg-slate-950 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 shrink-0">
-            <div>
-              {activeSedeId !== 'general' && (
-                <div className="flex items-center gap-2 text-xs">
-                  <label className="text-slate-400 font-medium">Destino:</label>
-                  <select
-                    value={saveTarget}
-                    onChange={e => setSaveTarget(e.target.value as 'general' | 'sede')}
-                    className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs font-semibold text-emerald-300 focus:outline-none"
-                  >
-                    <option value="sede">Versión de mi Sede ({activeSedeId})</option>
-                    <option value="general">Catálogo General Nacional</option>
-                  </select>
-                </div>
-              )}
+          {/* Barra Inferior Fija en Una Sola Fila */}
+          <div className="px-3 py-2.5 sm:px-4 sm:py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-2 shrink-0 flex-nowrap">
+            <div className="flex items-center shrink-0">
+              {canDeleteLocalSong ? (
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  title="Eliminar canción"
+                  aria-label="Eliminar canción"
+                  className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-xs font-medium text-rose-400 hover:bg-rose-950/50 transition-colors whitespace-nowrap"
+                >
+                  <Trash2 className="w-4 h-4 shrink-0" />
+                  <span className="hidden sm:inline">Eliminar</span>
+                </button>
+              ) : canRestoreOverride ? (
+                <button
+                  type="button"
+                  onClick={handleRestoreOverrideClick}
+                  title="Restaurar a versión general"
+                  aria-label="Restaurar a versión general"
+                  className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-xs font-medium text-amber-300 hover:bg-amber-950/40 transition-colors whitespace-nowrap"
+                >
+                  <RotateCcw className="w-4 h-4 shrink-0" />
+                  <span className="hidden sm:inline">Restaurar general</span>
+                </button>
+              ) : null}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0 ml-auto">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:bg-slate-800 transition-colors"
+                className="px-3 sm:px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 transition-colors whitespace-nowrap"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="flex items-center gap-1.5 px-4 sm:px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-950 transition-colors"
+                className="flex items-center gap-1.5 px-3.5 sm:px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-950 transition-colors whitespace-nowrap"
               >
-                <Save className="w-4 h-4" />
-                <span>Guardar Canción</span>
+                <Save className="w-4 h-4 shrink-0" />
+                <span>Guardar</span>
+                <span className="hidden sm:inline">Canción</span>
               </button>
             </div>
           </div>
         </form>
       </div>
-    </div>,
-    document.body
+    </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 };

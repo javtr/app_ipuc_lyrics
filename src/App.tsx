@@ -1,20 +1,26 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { 
-  BookOpen, 
-  ListMusic, 
-  Search, 
-  Sparkles, 
-  Flag,
+import {
+  BookOpen,
+  ListMusic,
+  Search,
+  Sparkles,
   Share2,
   Plus,
-  Music
+  Music,
+  AlertTriangle,
+  Church,
+  X
 } from 'lucide-react';
 import { db, initializeDatabase } from './db';
 import { BaseSong, SedeProfile, SyncStatus } from './types';
-import { resolveSongForDisplay } from './services/songResolver';
+import { resolveSongForDisplay, isSongVisibleInSede } from './services/songResolver';
 import { decompressSetlist } from './services/urlSharing';
 import { checkAndRequestStoragePersistence } from './services/backupService';
+import {
+  getSongOpeningLine,
+  matchesSongTitleOrLyrics
+} from './services/songEditorHelper';
 import {
   getLastSyncAt,
   getStoredSedes,
@@ -25,7 +31,8 @@ import {
 import { SedeSelector, SEDES_LIST } from './components/SedeSelector';
 import { MusicianView } from './components/MusicianView';
 import { ProjectionView } from './components/ProjectionView';
-import { SetlistManager } from './components/SetlistManager';
+import { SetlistManager, SetlistSelectionContext } from './components/SetlistManager';
+import { SetlistNavProps } from './components/SetlistNavControls';
 import { CorrectionModal } from './components/CorrectionModal';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { SongEditorModal } from './components/SongEditorModal';
@@ -40,16 +47,23 @@ export function App() {
     return localStorage.getItem(ACTIVE_SEDE_STORAGE_KEY) || 'general';
   });
   const [songContextSedeId, setSongContextSedeId] = useState<string | null>(null);
+  const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
+  const [selectedSetlistId, setSelectedSetlistId] = useState<string | null>(null);
+  const [setlistNavContext, setSetlistNavContext] = useState<SetlistSelectionContext | null>(null);
   const [selectedSongId, setSelectedSongId] = useState<string>('sublime-gracia');
+  const [isExplicitSongSelection, setIsExplicitSongSelection] = useState<boolean>(false);
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list');
   const [isProjectionMode, setIsProjectionMode] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [correctionSong, setCorrectionSong] = useState<BaseSong | null>(null);
   const [importNotification, setImportNotification] = useState<string | null>(null);
-  const [isSedeModalOpenOnMobile, setIsSedeModalOpenOnMobile] = useState<boolean>(false);
+  const [isSedeSelectorOpen, setIsSedeSelectorOpen] = useState<boolean>(false);
+  const [sedeRequiredPrompt, setSedeRequiredPrompt] = useState<'edit' | 'create' | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState<boolean>(false);
   const [songToEdit, setSongToEdit] = useState<BaseSong | null>(null);
+  const [editorOriginalTitle, setEditorOriginalTitle] = useState<string | undefined>(undefined);
+  const [editorInitialNotes, setEditorInitialNotes] = useState<string | undefined>(undefined);
   const [isBackupModalOpen, setIsBackupModalOpen] = useState<boolean>(false);
   const [sedesList, setSedesList] = useState<SedeProfile[]>(() => getStoredSedes(SEDES_LIST));
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
@@ -60,6 +74,7 @@ export function App() {
 
   const activeSedeRef = useRef(activeSedeId);
   activeSedeRef.current = activeSedeId;
+  const importTimerRef = useRef<number | null>(null);
 
   const toggleMusicianMode = () => {
     const nextMode = !isMusicianMode;
@@ -77,6 +92,8 @@ export function App() {
     const result = await syncCatalogAndSede(targetSedeId, { force });
     if (result.sedes && result.sedes.length > 0) {
       setSedesList(result.sedes);
+    } else {
+      setSedesList(getStoredSedes(SEDES_LIST));
     }
     setLastSyncAt(getLastSyncAt());
     setSyncStatus(result.status);
@@ -85,15 +102,27 @@ export function App() {
   const handleSelectSede = useCallback(async (nextSedeId: string) => {
     setActiveSedeId(nextSedeId);
     setSongContextSedeId(null);
+    setSelectedItemKey(null);
+    setSetlistNavContext(null);
     localStorage.setItem(ACTIVE_SEDE_STORAGE_KEY, nextSedeId);
+    setSedesList(getStoredSedes(SEDES_LIST));
+
+    const currentSong = await db.songs.get(selectedSongId);
+    if (currentSong && !isSongVisibleInSede(currentSong, nextSedeId)) {
+      const allDbSongs = await db.songs.toArray();
+      const firstVisible = allDbSongs.find(s => isSongVisibleInSede(s, nextSedeId));
+      setIsExplicitSongSelection(false);
+      setSelectedSongId(firstVisible?.id || 'sublime-gracia');
+      setMobileView('list');
+    }
 
     if (nextSedeId !== 'general' && navigator.onLine) {
       setSyncStatus('syncing');
-      const result = await syncSedeFromGitHub(nextSedeId);
+      const result = await syncSedeFromGitHub(nextSedeId, { force: true });
       setLastSyncAt(getLastSyncAt());
       setSyncStatus(result.status);
     }
-  }, []);
+  }, [selectedSongId]);
 
   // Inicializar base de datos IndexedDB en primer montaje y sincronizar desde GitHub
   useEffect(() => {
@@ -129,21 +158,27 @@ export function App() {
           setActiveTab('setlists');
 
           let notification = `¡Repertorio "${importedSetlist.name}" importado exitosamente!`;
-          if (importedSetlist.sedeId && importedSetlist.sedeId !== 'general') {
-            if (navigator.onLine) {
-              const syncRes = await syncSedeFromGitHub(importedSetlist.sedeId);
-              if (syncRes.status === 'synced') {
-                setLastSyncAt(getLastSyncAt());
-                notification = `¡Repertorio "${importedSetlist.name}" importado y sincronizado!`;
-              }
-            } else {
-              notification = `¡Repertorio "${importedSetlist.name}" importado! (Sin conexión: usando catálogo local)`;
+          if (navigator.onLine) {
+            const syncRes = await syncCatalogAndSede(importedSetlist.sedeId || 'general', {
+              force: true
+            });
+            if (syncRes.sedes && syncRes.sedes.length > 0) {
+              setSedesList(syncRes.sedes);
             }
+            if (syncRes.status === 'synced') {
+              setLastSyncAt(getLastSyncAt());
+              notification = `¡Repertorio "${importedSetlist.name}" importado y sincronizado!`;
+            }
+          } else if (importedSetlist.sedeId && importedSetlist.sedeId !== 'general') {
+            notification = `¡Repertorio "${importedSetlist.name}" importado! (Sin conexión: usando catálogo local)`;
           }
 
           setImportNotification(notification);
           window.history.replaceState(null, '', window.location.pathname);
-          setTimeout(() => setImportNotification(null), 5000);
+          if (importTimerRef.current) {
+            clearTimeout(importTimerRef.current);
+          }
+          importTimerRef.current = window.setTimeout(() => setImportNotification(null), 5000);
         }
       }
     };
@@ -155,6 +190,9 @@ export function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('hashchange', checkSharedUrl);
+      if (importTimerRef.current) {
+        clearTimeout(importTimerRef.current);
+      }
     };
   }, [runSync]);
 
@@ -163,20 +201,32 @@ export function App() {
   const overrides = useLiveQuery(() => db.overrides.toArray()) || [];
   const setlists = useLiveQuery(() => db.setlists.toArray()) || [];
 
-  // Filtrado de canciones por búsqueda
-  const filteredSongs = songs.filter(song => {
-    const q = searchQuery.toLowerCase();
-    return (
-      song.title.toLowerCase().includes(q) ||
-      (song.artist && song.artist.toLowerCase().includes(q)) ||
-      (song.tags && song.tags.some(t => t.toLowerCase().includes(q)))
-    );
-  });
+  const currentSedeProfile = sedesList.find(s => s.id === activeSedeId) || {
+    name: activeSedeId === 'general' ? 'Catálogo General' : activeSedeId,
+    shortName: activeSedeId === 'general' ? 'General' : activeSedeId.replace(/^sede-/, '')
+  };
 
-  // Canción activa resuelta según sede seleccionada (o sede origen si viene de un repertorio)
+  // Filtrado por visibilidad de sede y búsqueda por título o contenido limpio de letra
+  const visibleSongs = songs.filter(song => isSongVisibleInSede(song, activeSedeId));
+  const catalogEntries = visibleSongs
+    .map(song => ({
+      song,
+      resolvedItem: resolveSongForDisplay(song, activeSedeId, overrides, {
+        sedeLabel: currentSedeProfile.name
+      })
+    }))
+    .filter(({ song, resolvedItem }) =>
+      matchesSongTitleOrLyrics(song, searchQuery, resolvedItem.sections, resolvedItem.title)
+    );
+
+  // Resolución segura sin sustituciones silenciosas cuando una canción de repertorio falta offline
   const effectiveSedeId = songContextSedeId || activeSedeId;
   const effectiveSedeProfile = sedesList.find(s => s.id === effectiveSedeId);
-  const activeBaseSong = songs.find(s => s.id === selectedSongId) || songs[0];
+  const effectiveSongs = songs.filter(song => isSongVisibleInSede(song, effectiveSedeId));
+  const foundSelectedSong = effectiveSongs.find(s => s.id === selectedSongId);
+  const isMissingRequestedSong = Boolean(isExplicitSongSelection && songs.length > 0 && !foundSelectedSong);
+  const activeBaseSong = foundSelectedSong || (isExplicitSongSelection ? undefined : visibleSongs[0]);
+
   const activeDisplaySong = activeBaseSong
     ? resolveSongForDisplay(activeBaseSong, activeSedeId, overrides, {
         expectedSedeId: effectiveSedeId,
@@ -185,10 +235,106 @@ export function App() {
       })
     : null;
 
-  const currentSedeProfile = sedesList.find(s => s.id === activeSedeId) || { name: 'Catálogo', shortName: 'General' };
+  const activeNavSetlist = setlistNavContext
+    ? setlists.find(s => s.id === setlistNavContext.setlistId)
+    : undefined;
+
+  const navigateToSetlistIndex = (targetIndex: number) => {
+    if (!activeNavSetlist) return;
+    const targetItem = activeNavSetlist.items[targetIndex];
+    if (!targetItem) return;
+    setSelectedSongId(targetItem.songId);
+    setIsExplicitSongSelection(true);
+    setSongContextSedeId(activeNavSetlist.sedeId || null);
+    setSelectedItemKey(targetItem.key || null);
+    setSetlistNavContext({ setlistId: activeNavSetlist.id, itemIndex: targetIndex });
+    setMobileView('detail');
+  };
+
+  const setlistNav: SetlistNavProps | undefined =
+    activeNavSetlist &&
+    setlistNavContext &&
+    setlistNavContext.itemIndex >= 0 &&
+    setlistNavContext.itemIndex < activeNavSetlist.items.length
+      ? {
+          canPrev: setlistNavContext.itemIndex > 0,
+          canNext: setlistNavContext.itemIndex < activeNavSetlist.items.length - 1,
+          onPrev: () => navigateToSetlistIndex(setlistNavContext.itemIndex - 1),
+          onNext: () => navigateToSetlistIndex(setlistNavContext.itemIndex + 1),
+          onReturnToSetlist: () => {
+            setSelectedSetlistId(activeNavSetlist.id);
+            setActiveTab('setlists');
+          }
+        }
+      : undefined;
+
+  const openEditorForActiveSong = () => {
+    if (!activeBaseSong || !activeDisplaySong) return;
+
+    if (effectiveSedeId === 'general') {
+      setSedeRequiredPrompt('edit');
+      return;
+    }
+
+    const editableSong: BaseSong = {
+      id: activeBaseSong.id,
+      title: activeDisplaySong.title,
+      artist: activeDisplaySong.artist,
+      originalKey: activeDisplaySong.key,
+      bpm: activeDisplaySong.bpm,
+      timeSignature: activeDisplaySong.timeSignature,
+      sections: activeDisplaySong.sections,
+      tags: activeBaseSong.tags,
+      sedeId: activeBaseSong.sedeId,
+      notes: activeDisplaySong.notes,
+      updatedAt: activeBaseSong.updatedAt,
+      syncSource: activeBaseSong.syncSource
+    };
+
+    setSongToEdit(editableSong);
+    setEditorOriginalTitle(activeBaseSong.title);
+    setEditorInitialNotes(activeDisplaySong.notes);
+    setIsEditorOpen(true);
+  };
+
+  const openCreateSongEditor = () => {
+    if (activeSedeId === 'general') {
+      setSedeRequiredPrompt('create');
+      return;
+    }
+
+    setSongToEdit(null);
+    setEditorOriginalTitle(undefined);
+    setEditorInitialNotes(undefined);
+    setIsEditorOpen(true);
+  };
+
+  const handleRestoreOverride = async (songId: string) => {
+    if (!effectiveSedeId || effectiveSedeId === 'general') return;
+    await db.overrides.delete(`${songId}_${effectiveSedeId}`);
+  };
+
+  const handleDeleteSong = async (songId: string) => {
+    const existingSong = await db.songs.get(songId);
+    if (existingSong && existingSong.syncSource !== 'local') {
+      return;
+    }
+
+    await db.songs.delete(songId);
+    const relatedOverrides = overrides.filter(o => o.baseSongId === songId);
+    if (relatedOverrides.length > 0) {
+      await db.overrides.bulkDelete(relatedOverrides.map(o => o.id));
+    }
+    setIsExplicitSongSelection(false);
+    setSongContextSedeId(null);
+    setSelectedItemKey(null);
+    setSetlistNavContext(null);
+    setSelectedSongId(visibleSongs.find(s => s.id !== songId)?.id || 'sublime-gracia');
+    setMobileView('list');
+  };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col pb-16 lg:pb-0">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
       {/* Barra de Notificación de Importación */}
       {importNotification && (
         <div className="bg-emerald-600 text-white text-xs sm:text-sm font-semibold py-2.5 px-4 text-center shadow-lg flex items-center justify-center gap-2">
@@ -197,8 +343,8 @@ export function App() {
         </div>
       )}
 
-      {/* Barra de Navegación Superior */}
-      <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800">
+      {/* Barra de Navegación Superior (Desplazable para maximizar área móvil) */}
+      <header className="relative z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2 sm:gap-4">
           {/* Logo y Nombre */}
           <div className="flex items-center gap-2.5">
@@ -219,7 +365,12 @@ export function App() {
           <div className="flex items-center gap-2 sm:gap-4">
             <nav className="hidden lg:flex items-center p-1 bg-slate-900 border border-slate-800 rounded-xl">
               <button
-                onClick={() => setActiveTab('catalog')}
+                onClick={() => {
+                  setActiveTab('catalog');
+                  setSongContextSedeId(null);
+                  setSelectedItemKey(null);
+                  setSetlistNavContext(null);
+                }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                   activeTab === 'catalog'
                     ? 'bg-emerald-600 text-white shadow-sm'
@@ -248,8 +399,8 @@ export function App() {
               activeSedeId={activeSedeId}
               onSelectSede={handleSelectSede}
               isOnline={isOnline}
-              isOpenControlled={isSedeModalOpenOnMobile ? true : undefined}
-              onCloseControlled={() => setIsSedeModalOpenOnMobile(false)}
+              isOpenControlled={isSedeSelectorOpen ? true : undefined}
+              onCloseControlled={() => setIsSedeSelectorOpen(false)}
               sedesList={sedesList}
               syncStatus={syncStatus}
               lastSyncAt={lastSyncAt}
@@ -259,7 +410,7 @@ export function App() {
             {/* Conmutador Global Modo Músico / Modo Lector */}
             <button
               onClick={toggleMusicianMode}
-              title={isMusicianMode ? "Desactivar modo músico (Ver solo letra lírica)" : "Activar modo músico (Ver acordes y teoría musical)"}
+              title={isMusicianMode ? 'Desactivar modo músico (Ver solo letra lírica)' : 'Activar modo músico (Ver acordes y teoría musical)'}
               className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all shrink-0 ${
                 isMusicianMode
                   ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500 shadow-sm shadow-emerald-950'
@@ -292,85 +443,83 @@ export function App() {
                   <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
-                    placeholder="Buscar canción, artista o tag..."
+                    placeholder="Buscar por título o parte de la letra..."
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 sm:py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
                   />
                 </div>
                 <button
-                  onClick={() => {
-                    setSongToEdit(null);
-                    setIsEditorOpen(true);
-                  }}
+                  onClick={openCreateSongEditor}
                   title="Crear nueva canción"
                   className="flex items-center gap-1 px-3 py-2 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shrink-0 shadow-sm transition-colors"
                 >
                   <Plus className="w-4 h-4" />
-                  <span className="hidden xs:inline">Nueva</span>
+                  <span className="hidden sm:inline">Nueva</span>
                 </button>
               </div>
 
               {/* Lista de Canciones */}
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-1.5 sm:p-2 space-y-1 max-h-[calc(100vh-180px)] lg:max-h-[calc(100vh-250px)] overflow-y-auto">
-                {filteredSongs.map(song => {
-                  const hasLocalOverride = overrides.some(
-                    o => o.baseSongId === song.id && o.sedeId === activeSedeId
-                  );
-                  const isSelected = song.id === selectedSongId;
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-1.5 sm:p-2 space-y-1 lg:max-h-[calc(100vh-250px)] lg:overflow-y-auto">
+                {catalogEntries.map(({ song, resolvedItem }) => {
+                  const hasLocalOverride = resolvedItem.isLocalOverride;
+                  const isSedeExclusive = Boolean(song.sedeId && song.sedeId !== 'general');
+                  const showSedeBadge = hasLocalOverride || isSedeExclusive;
+                  const openingLine = getSongOpeningLine(resolvedItem.sections);
+                  const isSelected = activeBaseSong ? song.id === activeBaseSong.id : false;
 
                   return (
                     <div
                       key={song.id}
                       onClick={() => {
                         setSelectedSongId(song.id);
+                        setIsExplicitSongSelection(true);
                         setSongContextSedeId(null);
+                        setSelectedItemKey(null);
+                        setSetlistNavContext(null);
                         setMobileView('detail');
                       }}
                       className={`group p-3 rounded-xl cursor-pointer transition-all flex items-center justify-between active:scale-[0.99] ${
                         isSelected
                           ? 'bg-slate-800 border border-emerald-600/40 text-white shadow-md'
-                          : 'hover:bg-slate-850 text-slate-300 hover:text-white'
+                          : 'hover:bg-slate-800/80 text-slate-300 hover:text-white'
                       }`}
                     >
                       <div className="flex-1 min-w-0 pr-2">
                         <div className="flex items-center gap-1.5">
                           <h4 className="text-sm font-semibold truncate">{song.title}</h4>
-                          {hasLocalOverride && (
+                          {showSedeBadge && (
                             <span
-                              title="Esta sede tiene una versión local adaptada"
+                              title="Versión o canción exclusiva de esta sede"
                               className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"
                             />
                           )}
                         </div>
-                        <p className="text-xs text-slate-400 truncate">
-                          {song.artist || 'Himnario'} {isMusicianMode && `• Tono: ${song.originalKey}`}
+                        <p className="text-xs text-slate-400 truncate mt-0.5">
+                          {openingLine || 'Sin letra registrada'}
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-1">
-                        {hasLocalOverride && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-medium">
-                            Sede
-                          </span>
-                        )}
+                      {(isMusicianMode || showSedeBadge) && (
+                        <div className="flex items-center gap-1 shrink-0">
+                          {isMusicianMode && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-bold">
+                              {resolvedItem.key}
+                            </span>
+                          )}
 
-                        <button
-                          onClick={e => {
-                            e.stopPropagation();
-                            setCorrectionSong(song);
-                          }}
-                          title="Reportar corrección en catálogo general"
-                          className="p-1 rounded text-slate-500 hover:text-amber-400 hover:bg-slate-900 transition-colors opacity-70 sm:opacity-0 sm:group-hover:opacity-100"
-                        >
-                          <Flag className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                          {showSedeBadge && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-medium">
+                              Sede
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
 
-                {filteredSongs.length === 0 && (
+                {catalogEntries.length === 0 && (
                   <div className="py-8 text-center text-xs text-slate-500">
                     No se encontraron canciones que coincidan.
                   </div>
@@ -384,42 +533,80 @@ export function App() {
                   <span>Arquitectura de Variantes Activa</span>
                 </div>
                 <p className="text-[11px] leading-relaxed text-slate-500">
-                  Sede actual: <strong className="text-emerald-400">{activeSedeId}</strong>. Las personalizaciones en el atril se guardan localmente para tu sede sin modificar el catálogo general.
+                  Sede actual: <strong className="text-emerald-400">{currentSedeProfile.name}</strong>. Las personalizaciones en el atril se guardan localmente para tu sede sin modificar el catálogo general.
                 </p>
               </div>
             </div>
 
-            {/* Columna Derecha: Vista de Canción (ReaderView por defecto vs MusicianView según isMusicianMode) */}
+            {/* Columna Derecha: Vista de Canción */}
             <div className={`lg:col-span-8 ${
               mobileView === 'list' ? 'hidden lg:block' : 'block'
             }`}>
-              {activeDisplaySong ? (
+              {isMissingRequestedSong ? (
+                <div className="max-w-xl mx-auto mt-6 p-6 rounded-2xl bg-amber-950/30 border border-amber-800/60 text-center space-y-3">
+                  <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto" />
+                  <h3 className="text-base font-bold text-white">
+                    Canción aún no descargada en este dispositivo
+                  </h3>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    El repertorio solicita la canción <code className="text-amber-300">{selectedSongId}</code>, pero todavía no existe en tu catálogo local. Conéctate a internet y sincroniza el cancionero.
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                    {setlistNav && (
+                      <button
+                        onClick={setlistNav.onReturnToSetlist}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition-colors"
+                      >
+                        Volver al repertorio
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        setIsExplicitSongSelection(false);
+                        setSongContextSedeId(null);
+                        setSelectedItemKey(null);
+                        setSetlistNavContext(null);
+                        setMobileView('list');
+                      }}
+                      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-white transition-colors"
+                    >
+                      Volver al cancionero
+                    </button>
+                    {isOnline && (
+                      <button
+                        onClick={() => runSync(activeSedeId, true)}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold text-white transition-colors"
+                      >
+                        Actualizar cancionero ahora
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : activeDisplaySong ? (
                 isMusicianMode ? (
                   <MusicianView
                     song={activeDisplaySong}
-                    activeSedeId={effectiveSedeId}
+                    expectedKey={selectedItemKey || undefined}
+                    setlistNav={setlistNav}
                     onEnterProjection={() => setIsProjectionMode(true)}
-                    onSongUpdated={() => {}}
-                    onBackToCatalog={() => setMobileView('list')}
-                    onSwitchToLyrics={toggleMusicianMode}
-                    onEditFullSong={() => {
-                      if (activeBaseSong) {
-                        setSongToEdit(activeBaseSong);
-                        setIsEditorOpen(true);
-                      }
+                    onBackToCatalog={() => {
+                      setSetlistNavContext(null);
+                      setMobileView('list');
                     }}
+                    onEditFullSong={openEditorForActiveSong}
+                    onReportCorrection={activeBaseSong ? () => setCorrectionSong(activeBaseSong) : undefined}
                   />
                 ) : (
                   <ReaderView
                     song={activeDisplaySong}
+                    setlistNav={setlistNav}
                     onEnterProjection={() => setIsProjectionMode(true)}
-                    onBackToCatalog={() => setMobileView('list')}
-                    onEditSong={() => {
-                      if (activeBaseSong) {
-                        setSongToEdit(activeBaseSong);
-                        setIsEditorOpen(true);
-                      }
+                    onBackToCatalog={() => {
+                      setSetlistNavContext(null);
+                      setMobileView('list');
                     }}
+                    onEditSong={openEditorForActiveSong}
+                    onReportCorrection={activeBaseSong ? () => setCorrectionSong(activeBaseSong) : undefined}
                   />
                 )
               ) : (
@@ -435,13 +622,25 @@ export function App() {
           /* Vista de Repertorios */
           <SetlistManager
             songs={songs}
+            overrides={overrides}
             activeSedeId={activeSedeId}
+            sedesList={sedesList}
             savedSetlists={setlists}
             isMusicianMode={isMusicianMode}
+            selectedSetlistId={selectedSetlistId}
+            onSelectSetlistId={setSelectedSetlistId}
             onOpenBackup={() => setIsBackupModalOpen(true)}
-            onSelectSong={(songId, sourceSedeId) => {
+            onSelectSong={(songId, sourceSedeId, itemKey, setlistContext) => {
               setSelectedSongId(songId);
+              setIsExplicitSongSelection(true);
               setSongContextSedeId(sourceSedeId || null);
+              setSelectedItemKey(itemKey || null);
+              if (setlistContext) {
+                setSelectedSetlistId(setlistContext.setlistId);
+                setSetlistNavContext(setlistContext);
+              } else {
+                setSetlistNavContext(null);
+              }
               setActiveTab('catalog');
               setMobileView('detail');
             }}
@@ -456,10 +655,13 @@ export function App() {
         onSelectTab={tab => {
           setActiveTab(tab);
           if (tab === 'catalog') {
+            setSongContextSedeId(null);
+            setSelectedItemKey(null);
+            setSetlistNavContext(null);
             setMobileView('list');
           }
         }}
-        onOpenSedeSelector={() => setIsSedeModalOpenOnMobile(true)}
+        onOpenSedeSelector={() => setIsSedeSelectorOpen(true)}
         activeSedeName={currentSedeProfile.shortName || currentSedeProfile.name.replace('Catálogo ', '')}
       />
 
@@ -485,13 +687,22 @@ export function App() {
         <SongEditorModal
           isOpen={isEditorOpen}
           initialSong={songToEdit}
-          activeSedeId={activeSedeId}
+          originalSongTitle={editorOriginalTitle}
+          initialNotes={editorInitialNotes}
+          hasLocalOverride={Boolean(activeDisplaySong?.isLocalOverride && songToEdit)}
+          activeSedeId={effectiveSedeId}
+          activeSedeLabel={effectiveSedeProfile?.name}
           isMusicianMode={isMusicianMode}
+          existingSongIds={songs.map(s => s.id)}
           onClose={() => setIsEditorOpen(false)}
           onSave={savedSong => {
             setSelectedSongId(savedSong.id);
+            setIsExplicitSongSelection(true);
+            setSelectedItemKey(null);
             setMobileView('detail');
           }}
+          onDeleteSong={handleDeleteSong}
+          onRestoreOverride={handleRestoreOverride}
         />
       )}
 
@@ -502,6 +713,66 @@ export function App() {
           onClose={() => setIsBackupModalOpen(false)}
           onDataRestored={() => {}}
         />
+      )}
+
+      {/* Aviso Guía: El Catálogo General no se edita directamente sin elegir sede */}
+      {sedeRequiredPrompt && (
+        <div
+          onClick={() => setSedeRequiredPrompt(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200"
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-950/60 border border-amber-700/60 text-amber-400">
+                  <Church className="w-5 h-5" />
+                </div>
+                <h3 className="text-base font-bold text-white">
+                  Selecciona una iglesia para continuar
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSedeRequiredPrompt(null)}
+                aria-label="Cerrar aviso"
+                className="p-1 rounded-lg text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+              Las canciones del <strong className="text-white">Catálogo General</strong> son de solo lectura.{' '}
+              {sedeRequiredPrompt === 'edit'
+                ? 'Para editar letras, cambiar tonos o adaptar una canción, selecciona primero el catálogo específico de tu iglesia o sede.'
+                : 'Para agregar canciones locales, selecciona primero el catálogo específico de tu iglesia o sede.'}
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setSedeRequiredPrompt(null)}
+                className="px-3.5 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 transition-colors"
+              >
+                Entendido
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSedeRequiredPrompt(null);
+                  setIsSedeSelectorOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-colors"
+              >
+                <Church className="w-4 h-4" />
+                <span>Elegir Iglesia / Sede</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

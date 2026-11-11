@@ -22,21 +22,30 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
   const touchStartXRef = useRef<number>(0);
   const touchStartYRef = useRef<number>(0);
 
-  const sections: SongSection[] = song.sections;
-  const currentSection = sections[currentSectionIndex] || sections[0];
+  const sections: SongSection[] = song.sections || [];
+  const safeSectionIndex = sections.length === 0 ? 0 : Math.min(currentSectionIndex, sections.length - 1);
+  const currentSection = sections[safeSectionIndex];
   const cleanLines = currentSection ? getCleanLyrics(currentSection.lines) : [];
 
+  useEffect(() => {
+    setCurrentSectionIndex(0);
+  }, [song.id]);
+
+  useEffect(() => {
+    setCurrentSectionIndex(prev => (sections.length === 0 ? 0 : Math.min(prev, sections.length - 1)));
+  }, [sections.length]);
+
   const handleNext = useCallback(() => {
-    if (currentSectionIndex < sections.length - 1) {
-      setCurrentSectionIndex(prev => prev + 1);
+    if (safeSectionIndex < sections.length - 1) {
+      setCurrentSectionIndex(safeSectionIndex + 1);
     }
-  }, [currentSectionIndex, sections.length]);
+  }, [safeSectionIndex, sections.length]);
 
   const handlePrev = useCallback(() => {
-    if (currentSectionIndex > 0) {
-      setCurrentSectionIndex(prev => prev - 1);
+    if (safeSectionIndex > 0) {
+      setCurrentSectionIndex(safeSectionIndex - 1);
     }
-  }, [currentSectionIndex]);
+  }, [safeSectionIndex]);
 
   const jumpToChorus = useCallback(() => {
     const chorusIndex = sections.findIndex(s => s.type === 'chorus');
@@ -55,13 +64,17 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
   // Manejo de teclado para proyeccionista con teclado
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+      const targetTag = (e.target as HTMLElement | null)?.tagName;
+      if (targetTag && ['INPUT', 'TEXTAREA', 'SELECT'].includes(targetTag)) return;
 
       switch (e.key) {
         case 'ArrowRight':
         case 'ArrowDown':
         case ' ':
         case 'Enter':
+          if (targetTag && ['BUTTON', 'A'].includes(targetTag) && (e.key === ' ' || e.key === 'Enter')) {
+            return;
+          }
           e.preventDefault();
           handleNext();
           break;
@@ -140,14 +153,19 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
             {song.title}
           </span>
           <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono shrink-0">
-            {currentSectionIndex + 1}/{sections.length} • {currentSection?.label}
+            {sections.length > 0
+              ? `${safeSectionIndex + 1}/${sections.length} • ${currentSection?.label || ''}`
+              : 'Sin estrofas'}
           </span>
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">
           {/* Botón Blackout */}
           <button
-            onClick={() => setIsBlackout(!isBlackout)}
+            onClick={e => {
+              e.currentTarget.blur();
+              setIsBlackout(!isBlackout);
+            }}
             title="Pantalla en negro [B]"
             className={`p-1.5 sm:p-2 rounded-lg text-xs font-medium border flex items-center gap-1 transition-colors ${
               isBlackout
@@ -160,7 +178,10 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
           </button>
 
           <button
-            onClick={toggleFullScreen}
+            onClick={e => {
+              e.currentTarget.blur();
+              toggleFullScreen();
+            }}
             title="Pantalla Completa"
             className="p-1.5 sm:p-2 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
           >
@@ -180,22 +201,34 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
       {/* Área Principal de Proyección con zonas táctiles laterales */}
       <div className="relative flex-1 flex items-center justify-center p-4 sm:p-10 md:p-16 text-center">
         {/* Zona táctil izquierda para retroceder con pulgar */}
-        <div
-          onClick={handlePrev}
-          className="absolute left-0 top-0 bottom-0 w-1/4 z-10 cursor-pointer"
-          title="Tocar para retroceder"
-        />
+        {!isBlackout && (
+          <div
+            onClick={handlePrev}
+            className="absolute left-0 top-0 bottom-0 w-1/4 z-10 cursor-pointer"
+            title="Tocar para retroceder"
+          />
+        )}
 
         {/* Zona táctil derecha para avanzar con pulgar */}
-        <div
-          onClick={handleNext}
-          className="absolute right-0 top-0 bottom-0 w-1/4 z-10 cursor-pointer"
-          title="Tocar para avanzar"
-        />
+        {!isBlackout && (
+          <div
+            onClick={handleNext}
+            className="absolute right-0 top-0 bottom-0 w-1/4 z-10 cursor-pointer"
+            title="Tocar para avanzar"
+          />
+        )}
 
         {isBlackout ? (
-          <div className="text-slate-800 text-xs sm:text-sm select-none">
+          <button
+            type="button"
+            onClick={() => setIsBlackout(false)}
+            className="w-full h-full flex items-center justify-center text-slate-700 hover:text-slate-500 text-xs sm:text-sm cursor-pointer z-20"
+          >
             [Pantalla en negro - Toca para reactivar]
+          </button>
+        ) : sections.length === 0 ? (
+          <div className="text-slate-400 text-base sm:text-xl font-medium">
+            Esta canción aún no tiene estrofas disponibles para proyectar.
           </div>
         ) : (
           <div className="max-w-5xl space-y-3 sm:space-y-6 z-0 pointer-events-none">
@@ -222,9 +255,12 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
           {sections.map((sec, idx) => (
             <button
               key={sec.id}
-              onClick={() => setCurrentSectionIndex(idx)}
+              onClick={e => {
+                e.currentTarget.blur();
+                setCurrentSectionIndex(idx);
+              }}
               className={`px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-[10px] sm:text-xs font-semibold whitespace-nowrap transition-all ${
-                idx === currentSectionIndex
+                idx === safeSectionIndex
                   ? 'bg-white text-black shadow-lg scale-105'
                   : 'bg-slate-900/80 text-slate-400 hover:text-white hover:bg-slate-800'
               }`}
@@ -237,16 +273,22 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
         {/* Flechas de navegación táctiles grandes */}
         <div className="flex items-center gap-1.5 sm:gap-2">
           <button
-            onClick={handlePrev}
-            disabled={currentSectionIndex === 0}
+            onClick={e => {
+              e.currentTarget.blur();
+              handlePrev();
+            }}
+            disabled={sections.length <= 1 || safeSectionIndex === 0}
             className="p-2 sm:p-3 rounded-full bg-slate-900/80 border border-slate-700 text-white hover:bg-slate-800 disabled:opacity-20 transition-all"
             title="Anterior"
           >
             <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
           <button
-            onClick={handleNext}
-            disabled={currentSectionIndex === sections.length - 1}
+            onClick={e => {
+              e.currentTarget.blur();
+              handleNext();
+            }}
+            disabled={sections.length <= 1 || safeSectionIndex >= sections.length - 1}
             className="p-2 sm:p-3 rounded-full bg-white text-black hover:bg-slate-200 disabled:opacity-20 transition-all shadow-lg"
             title="Siguiente"
           >

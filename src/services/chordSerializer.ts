@@ -22,11 +22,12 @@ export function serializeSectionsToText(sections: SongSection[]): string {
  * Si el usuario no incluye directivas, divide inteligentemente por bloques vacíos.
  */
 export function parseTextToSections(rawText: string): SongSection[] {
-  if (!rawText.trim()) {
+  const normalizedText = rawText.replace(/\r\n?/g, '\n');
+  if (!normalizedText.trim()) {
     return [];
   }
 
-  const rawLines = rawText.split('\n');
+  const rawLines = normalizedText.split('\n');
   const sections: SongSection[] = [];
   let currentSection: SongSection | null = null;
   let verseCounter = 1;
@@ -66,7 +67,7 @@ export function parseTextToSections(rawText: string): SongSection[] {
       const label = directiveMatch[2]?.trim() || getDefaultLabel(sectionType, verseCounter, chorusCounter);
 
       currentSection = {
-        id: `sec_${Date.now()}_${sections.length + 1}`,
+        id: `sec_${sections.length + 1}_${sectionType}`,
         type: sectionType,
         label,
         lines: []
@@ -91,7 +92,7 @@ export function parseTextToSections(rawText: string): SongSection[] {
     if (trimmed || (currentSection && currentSection.lines.length > 0)) {
       if (!currentSection) {
         currentSection = {
-          id: `sec_${Date.now()}_${sections.length + 1}`,
+          id: `sec_${sections.length + 1}_verse`,
           type: 'verse',
           label: `Verso ${verseCounter++}`,
           lines: []

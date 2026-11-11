@@ -9,14 +9,43 @@ const FLAT_TO_SHARP_MAP: Record<string, string> = {
   'Eb': 'D#',
   'Gb': 'F#',
   'Ab': 'G#',
-  'Bb': 'A#'
+  'Bb': 'A#',
+  'Cb': 'B',
+  'Fb': 'E',
+  'B#': 'C',
+  'E#': 'F'
 };
 
 /**
- * Normaliza un acorde bemol a su equivalente en sostenido para simplificar la transposición.
+ * Normaliza una nota raíz en sostenido o bemol al índice cromático equivalente.
  */
 function normalizeRootNote(note: string): string {
   return FLAT_TO_SHARP_MAP[note] || note;
+}
+
+/**
+ * Extrae la nota raíz principal de una tonalidad o acorde (ej. "Am" -> "A", "F#m" -> "F#").
+ */
+function extractRootFromKey(key: string): string | null {
+  const trimmed = key.trim();
+  const match = trimmed.match(/^([A-G][#b]?)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Calcula la diferencia mínima en semitonos con signo (en rango [-5, +6]) entre dos tonalidades.
+ */
+export function getSemitoneDifference(fromKey: string, toKey: string): number {
+  const fromRoot = extractRootFromKey(fromKey);
+  const toRoot = extractRootFromKey(toKey);
+  if (!fromRoot || !toRoot) return 0;
+
+  const fromIdx = CHROMATIC_SCALE.indexOf(normalizeRootNote(fromRoot));
+  const toIdx = CHROMATIC_SCALE.indexOf(normalizeRootNote(toRoot));
+  if (fromIdx === -1 || toIdx === -1) return 0;
+
+  const rawDelta = (toIdx - fromIdx + 12) % 12;
+  return rawDelta > 6 ? rawDelta - 12 : rawDelta;
 }
 
 /**
@@ -39,14 +68,16 @@ function transposeRootNote(root: string, semitones: number): string {
 export function transposeChord(chord: string, semitones: number): string {
   if (semitones === 0) return chord;
 
+  const trimmed = chord.trim();
+
   // Manejo de acordes con bajo invertido (ej. D/F#)
-  if (chord.includes('/')) {
-    const [mainChord, bassChord] = chord.split('/');
+  if (trimmed.includes('/')) {
+    const [mainChord, bassChord] = trimmed.split('/');
     return `${transposeChord(mainChord, semitones)}/${transposeChord(bassChord, semitones)}`;
   }
 
   // Regex para extraer nota raíz (A-G seguido opcionalmente de # o b) y el resto del sufijo
-  const match = chord.match(/^([A-G][#b]?)(.*)$/);
+  const match = trimmed.match(/^([A-G][#b]?)(.*)$/);
   if (!match) return chord;
 
   const [, root, suffix] = match;
@@ -75,27 +106,38 @@ export interface ChordLyricToken {
   text: string;
 }
 
+export interface ChordWordGroup {
+  isSpace: boolean;
+  tokens: ChordLyricToken[];
+}
+
 /**
  * Parsea una línea de texto ChordPro en tokens de acorde + texto para alinear visualmente los acordes sobre las sílabas.
  */
 export function parseChordProLine(line: string): ChordLyricToken[] {
+  const firstBracket = line.indexOf('[');
+  if (firstBracket === -1) {
+    return [{ text: line }];
+  }
+
   const tokens: ChordLyricToken[] = [];
   const regex = /\[([^\]]+)\]([^\[]*)/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
+  let hasMatch = false;
 
-  // Si la línea comienza con texto antes del primer acorde
-  const firstBracket = line.indexOf('[');
   if (firstBracket > 0) {
     tokens.push({
       text: line.substring(0, firstBracket)
     });
-  } else if (firstBracket === -1) {
-    // Línea sin acordes
-    return [{ text: line }];
+    lastIndex = firstBracket;
   }
 
   while ((match = regex.exec(line)) !== null) {
+    if (match.index > lastIndex && hasMatch) {
+      tokens.push({ text: line.substring(lastIndex, match.index) });
+    }
+    hasMatch = true;
     tokens.push({
       chord: match[1],
       text: match[2]
@@ -103,11 +145,67 @@ export function parseChordProLine(line: string): ChordLyricToken[] {
     lastIndex = regex.lastIndex;
   }
 
-  if (lastIndex < line.length && firstBracket === -1) {
+  if (!hasMatch) {
+    return [{ text: line }];
+  }
+
+  if (lastIndex < line.length) {
     tokens.push({ text: line.substring(lastIndex) });
   }
 
   return tokens;
+}
+
+/**
+ * Agrupa tokens ChordPro por límites de palabra para evitar cortes visuales dentro de una sílaba
+ * (ej. "Per[Em]dido") sin romper el salto natural entre palabras en pantallas móviles.
+ */
+export function groupChordTokensIntoWords(tokens: ChordLyricToken[]): ChordWordGroup[] {
+  const groups: ChordWordGroup[] = [];
+  let currentWordTokens: ChordLyricToken[] = [];
+
+  const flushWord = () => {
+    if (currentWordTokens.length > 0) {
+      groups.push({ isSpace: false, tokens: currentWordTokens });
+      currentWordTokens = [];
+    }
+  };
+
+  for (const token of tokens) {
+    const rawText = token.text;
+    if (!rawText) {
+      if (token.chord) {
+        currentWordTokens.push({ chord: token.chord, text: '' });
+      }
+      continue;
+    }
+
+    const parts = rawText.split(/(\s+)/).filter(part => part.length > 0);
+    let chordUsed = !token.chord;
+
+    for (const part of parts) {
+      const isWhitespace = /^\s+$/.test(part);
+      if (isWhitespace) {
+        flushWord();
+        if (!chordUsed && token.chord) {
+          groups.push({ isSpace: true, tokens: [{ chord: token.chord, text: part }] });
+          chordUsed = true;
+        } else {
+          groups.push({ isSpace: true, tokens: [{ text: part }] });
+        }
+      } else {
+        if (!chordUsed && token.chord) {
+          currentWordTokens.push({ chord: token.chord, text: part });
+          chordUsed = true;
+        } else {
+          currentWordTokens.push({ text: part });
+        }
+      }
+    }
+  }
+
+  flushWord();
+  return groups;
 }
 
 /**
@@ -119,4 +217,22 @@ export function transposeSections(sections: SongSection[], semitones: number): S
     ...sec,
     lines: sec.lines.map(line => transposeLine(line, semitones))
   }));
+}
+
+/**
+ * Transpone todos los acordes ChordPro dentro de un texto multilínea,
+ * preservando directivas de sección como `{verse: Verso 1}` sin alterarlas.
+ */
+export function transposeChordProText(rawText: string, semitones: number): string {
+  if (semitones === 0) return rawText;
+
+  return rawText
+    .split(/\r?\n/)
+    .map(line => {
+      if (/^\s*\{[^}]+\}\s*$/.test(line)) {
+        return line;
+      }
+      return transposeLine(line, semitones);
+    })
+    .join('\n');
 }

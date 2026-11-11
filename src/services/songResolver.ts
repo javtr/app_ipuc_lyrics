@@ -1,4 +1,5 @@
 import { BaseSong, SedeSongOverride, DisplaySong } from '../types';
+import { getSemitoneDifference, transposeSections } from './chordParser';
 
 export interface ResolveSongOptions {
   expectedSedeId?: string;
@@ -15,6 +16,8 @@ function toBaseDisplaySong(baseSong: BaseSong, fallbackNotice?: string): Display
     bpm: baseSong.bpm,
     timeSignature: baseSong.timeSignature,
     sections: baseSong.sections,
+    notes: baseSong.notes,
+    sedeId: baseSong.sedeId,
     isLocalOverride: false,
     originalSong: baseSong,
     fallbackNotice
@@ -22,9 +25,22 @@ function toBaseDisplaySong(baseSong: BaseSong, fallbackNotice?: string): Display
 }
 
 /**
+ * Determina si una canción debe ser visible dentro de la sede indicada.
+ * Las canciones sin sede o marcadas como 'general' son públicas en todas las sedes;
+ * las canciones creadas para una sede específica solo son visibles dentro de esa sede.
+ */
+export function isSongVisibleInSede(song: BaseSong, targetSedeId: string): boolean {
+  if (!song.sedeId || song.sedeId === 'general') {
+    return true;
+  }
+  return song.sedeId === targetSedeId;
+}
+
+/**
  * Resuelve una canción para mostrar en la interfaz según la sede seleccionada.
  * Si la sede activa (o esperada desde un repertorio) tiene una versión local (override),
- * la aplica respetando el cancionero base original. Si falta sincronizar esa sede,
+ * la aplica respetando el cancionero base original. Si el override solo cambia el tono,
+ * transpone automáticamente los acordes de la base. Si falta sincronizar esa sede,
  * aplica fallback seguro al catálogo general con un aviso discreto.
  */
 export function resolveSongForDisplay(
@@ -46,16 +62,25 @@ export function resolveSongForDisplay(
   );
 
   if (override) {
+    const resolvedKey = override.customKey || baseSong.originalKey;
+    const hasCustomSections = Boolean(override.customSections && override.customSections.length > 0);
+    const semitoneShift = !hasCustomSections
+      ? getSemitoneDifference(baseSong.originalKey, resolvedKey)
+      : 0;
+    const resolvedSections = hasCustomSections
+      ? override.customSections!
+      : transposeSections(baseSong.sections, semitoneShift);
+
+    const friendlySede = options?.sedeLabel || `Sede ${targetSedeId.replace(/^sede-/, '')}`;
+
     return {
       id: baseSong.id,
-      title: override.customTitle || `${baseSong.title} (Versión ${targetSedeId})`,
+      title: override.customTitle || `${baseSong.title} (${friendlySede})`,
       artist: baseSong.artist,
-      key: override.customKey || baseSong.originalKey,
+      key: resolvedKey,
       bpm: baseSong.bpm,
       timeSignature: baseSong.timeSignature,
-      sections: override.customSections && override.customSections.length > 0
-        ? override.customSections
-        : baseSong.sections,
+      sections: resolvedSections,
       notes: override.localNotes,
       isLocalOverride: true,
       sedeId: targetSedeId,
@@ -80,5 +105,7 @@ export function resolveAllSongsForDisplay(
   activeSedeId: string,
   overrides: SedeSongOverride[]
 ): DisplaySong[] {
-  return baseSongs.map(song => resolveSongForDisplay(song, activeSedeId, overrides));
+  return baseSongs
+    .filter(song => isSongVisibleInSede(song, activeSedeId))
+    .map(song => resolveSongForDisplay(song, activeSedeId, overrides));
 }

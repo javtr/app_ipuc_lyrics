@@ -74,11 +74,29 @@ export async function importBackupFromJson(jsonString: string): Promise<{
 
   const payload = parsed as BackupPayload;
 
-  if (!payload || payload.app !== 'AppLyrics' || !payload.data) {
+  if (!payload || payload.app !== 'AppLyrics' || !payload.data || typeof payload.data !== 'object') {
     throw new Error('El archivo no es una copia de seguridad válida de App Lyrics.');
   }
 
   const { songs = [], overrides = [], setlists = [] } = payload.data;
+
+  if (!Array.isArray(songs) || !Array.isArray(overrides) || !Array.isArray(setlists)) {
+    throw new Error('El archivo de respaldo contiene listas de datos con formato inválido.');
+  }
+
+  const areSongsValid = songs.every(
+    s => s && typeof s.id === 'string' && typeof s.title === 'string' && Array.isArray(s.sections)
+  );
+  const areOverridesValid = overrides.every(
+    o => o && typeof o.id === 'string' && typeof o.baseSongId === 'string' && typeof o.sedeId === 'string'
+  );
+  const areSetlistsValid = setlists.every(
+    l => l && typeof l.id === 'string' && typeof l.name === 'string' && Array.isArray(l.items)
+  );
+
+  if (!areSongsValid || !areOverridesValid || !areSetlistsValid) {
+    throw new Error('Algunos registros del archivo de respaldo están incompletos o dañados.');
+  }
 
   // Sincronizar en IndexedDB usando bulkPut (upsert)
   if (songs.length > 0) {

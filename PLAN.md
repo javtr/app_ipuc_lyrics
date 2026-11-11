@@ -1,231 +1,332 @@
-# Plan de Desarrollo (Etapa A): Sincronización de Lectura desde GitHub con Ramas de Datos Separadas y Fallback Seguro
+# Plan de Desarrollo — Aislamiento de Canciones por Sede, Barra Única de Canción y Navegación de Repertorios
 
-> **Estado:** EJECUTADO (Código, pruebas y ramas `catalog` / `sede/palestina` listos; pendiente cambiar visibilidad del repo a Pública para lectura Raw sin token)
+> **Estado:** Fase 1 (Discusión y Planificación en Modo Solo Lectura — Esperando aprobación expresa del usuario antes de modificar `src/` o `tests/`).
 
 ---
 
-## 1. Objetivo Técnico y Alineación Arquitectónica
+## 1. Objetivo Técnico
 
-### 1.1 Alcance
-Implementar la **Etapa A (Sincronización de Lectura `GitHub → IndexedDB`)** descrita en nuestra discusión y alineada con **[SPECIFICATIONS.md](file:///f:/Desarrollo/app_lyrics/SPECIFICATIONS.md)** (Secciones 1.2, 4.2 y 5.3) y **[.agent/ARCHITECTURE.md](file:///f:/Desarrollo/app_lyrics/.agent/ARCHITECTURE.md)** (Secciones 2 y 4):
+Resolver seis fallos y mejoras de experiencia detectadas durante las pruebas en móvil y escritorio:
 
-1. **Ramas de Datos Separadas en `javtr/app_ipuc_lyrics`:**
-   - El código fuente permanece limpio en `master` / `main`.
-   - Se crean ramas huérfanas (*orphan branches*) exclusivas para datos JSON:
-     - **`catalog`**: Contiene `catalog.json` (`BaseSong[]`) y `sedes.json` (`SedeProfile[]`).
-     - **`sede/palestina`** (y futuras `sede/{nombre}`): Contiene `overrides.json` (`SedeSongOverride[]`).
-   - Cada rama consolida sus canciones en un único archivo JSON para descargar todo el catálogo en **1 sola petición HTTP**, sin consumir límites de GitHub REST API y manteniendo costo **$0** vía `raw.githubusercontent.com`.
-2. **Descarga Base por Perfil (`activeSedeId` persistido):**
-   - Al abrir la app con conexión, se sincroniza el catálogo oficial desde la rama `catalog` y las variantes de la sede activa elegida por el usuario (persistida ahora en `localStorage` bajo `app_lyrics_active_sede`).
-   - Se fija una fecha semilla estática (`'2026-01-01T00:00:00.000Z'`) en `SEED_SONGS` / `SEED_OVERRIDES` para corregir el defecto actual de `new Date().toISOString()` que haría parecer que la semilla local siempre es más reciente que GitHub.
-3. **Sincronización On-Demand y Fallback Seguro (Alternativa 3 de `SPECIFICATIONS.md` Sección 5.3):**
-   - Al importar un repertorio compartido por WhatsApp (`#repertorio=...`), si su `sedeId` es distinto de `'general'` y hay conexión, la app descarga en segundo plano las variantes de esa sede y las guarda acumulativamente en `db.overrides`.
-   - Si no hay conexión al abrir un repertorio de una sede que aún no ha sido sincronizada, `resolveSongForDisplay` hace **fallback automático** a la canción base oficial del catálogo general y adjunta un aviso discreto (`fallbackNotice`) para que el músico siempre pueda tocar sin pantallas vacías.
-4. **Abstracción Total de Git en la UI:**
-   - El usuario nunca ve términos de Git (`branch`, `commit`, `raw`, `repo`). Solo ve el estado de actualización del cancionero y un botón amigable **"Actualizar Cancionero"** dentro del selector de congregación.
+1. **Aislamiento estricto de canciones creadas en una sede:**
+   - Hoy, al crear una canción estando en `Sede Palestina`, `SongEditorModal.handleSave` guarda la canción en `db.songs` sin campo de propiedad de sede (`sedeId`), además de crear un `override`. Como `App.tsx` (`catalogEntries`) y `SetlistManager.tsx` (selector de canciones) listan todo `db.songs`, esa canción se filtra al `Catálogo General` y a otras sedes como `Sede Central`.
+   - **Solución:** Añadir `sedeId?: string` y `notes?: string` a `BaseSong`, filtrar visibilidad con una función pura compartida `isSongVisibleInSede(song, targetSedeId)`, guardar canciones nuevas/propias de sede directamente en `db.songs` con su `sedeId` (sin crear overrides artificiales con sufijo de sede), y ejecutar una migración automática idempotente en `initializeDatabase()` para aislar canciones locales huérfanas ya creadas en una sola sede (como la canción de prueba existente).
 
-### 1.2 Nota de Gobernanza (`.agent/AGENTS.md`)
-- Todos los cambios de código y pruebas residen estrictamente dentro de `src/` y `tests/`.
-- En Fase 2 (solo tras aprobación expresa) se inicializarán y subirán las ramas huérfanas `catalog` y `sede/palestina` directamente en el repositorio actual `javtr/app_ipuc_lyrics` usando comandos Git dentro del directorio del repositorio (sin tocar rutas externas ni ensuciar el árbol de trabajo de `master`).
+2. **Barra de herramientas en una sola fila (Músico y Lector) en móvil:**
+   - Hoy `MusicianView` usa `flex-wrap`, generando dos filas en pantallas angostas al acumular etiqueta de tono, ícono musical, transposición, tamaño de fuente, WakeLock, Proyección y Edición.
+   - **Solución:** Eliminar la etiqueta `Tono: X` (con su ícono de nota musical `<Music2 />`) y los botones de semitono de `MusicianView`, compactar botones (`flex-nowrap`, paddings y ocultar textos largos bajo `sm` con `hidden sm:inline`), asegurando una sola fila horizontal tanto en `MusicianView` como en `ReaderView`.
+
+3. **Trasladar controles `-` / `+` de semitonos de `MusicianView` al Editor (`SongEditorModal`):**
+   - Los ajustes de transposición manual (`-1` / `+1` semitono) pertenecen únicamente al momento de editar la canción y guardar su tonalidad real junto con sus acordes transpuestos.
+   - **Solución:** Retirar `-`, `↺` y `+` de `MusicianView` (manteniendo internamente la transposición automática de lectura cuando un ítem de repertorio solicita un `expectedKey` distinto al tono guardado) e integrar botones compactos `-` / `+` junto al selector de `Tono` dentro de `SongEditorModal`.
+
+4. **Eliminar etiqueta superior `"Tono: X"` en `MusicianView`:**
+   - Suprimir el badge superior con `<Music2 />` y `Tono: ...`, ya que la cabecera debajo del título ya informa `"Tono guardado: X"` / `"Tono en sede: X"` (y en repertorio con tonalidad personalizada, `"Tono repertorio: X"`).
+
+5. **Control unificado de navegación de Repertorio de 3 funciones (`< | Repertorio | >`):**
+   - Al abrir una canción desde un repertorio:
+     - Botón izquierdo (`ChevronLeft`): navega a la canción anterior del mismo repertorio (deshabilitado si está en la primera).
+     - Botón central (`Repertorio`): regresa directamente a la vista de `Repertorios` manteniendo seleccionado ese repertorio activo.
+     - Botón derecho (`ChevronRight`): navega a la siguiente canción del mismo repertorio (deshabilitado si está en la última).
+
+6. **Ubicación del control de Repertorio inmediatamente a la derecha de `A- / A+`:**
+   - Extraer un componente reutilizable `SetlistNavControls` e insertarlo en `MusicianView` y `ReaderView` justo a la derecha del bloque `A- / A+` dentro de la misma fila única superior.
 
 ---
 
 ## 2. Pseudocódigo y Flujo Lógico
 
-### 2.1 Configuración Centralizada (`src/config/gitConfig.ts`)
-```text
-CONSTANTE GIT_CONFIG:
-  owner = 'javtr'
-  repo = 'app_ipuc_lyrics'
-  catalogBranch = 'catalog'
+### A. Aislamiento por Sede y Migración Automática
+```ts
+// src/types/index.ts
+interface BaseSong {
+  // ...campos existentes
+  sedeId?: string; // undefined o 'general' => catálogo público; 'sede-...' => exclusiva de esa sede
+  notes?: string;  // notas locales para canciones exclusivas de sede
+}
 
-FUNCIÓN getSedeBranch(sedeId):
-  SI !sedeId O sedeId == 'general' RETORNAR 'catalog'
-  SI sedeId.startsWith('sede-') RETORNAR 'sede/' + sedeId.slice(5)
-  RETORNAR 'sede/' + sedeId
+// src/services/songResolver.ts
+function isSongVisibleInSede(song: BaseSong, targetSedeId: string): boolean {
+  if (!song.sedeId || song.sedeId === 'general') {
+    return true;
+  }
+  return song.sedeId === targetSedeId;
+}
 
-FUNCIÓN getRawFileUrl(branch, filePath, cacheBustTimestamp?):
-  url = "https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filePath}"
-  SI cacheBustTimestamp: url += "?t=" + cacheBustTimestamp
-  RETORNAR url
+function toBaseDisplaySong(baseSong: BaseSong, fallbackNotice?: string): DisplaySong {
+  return {
+    // ...campos existentes
+    notes: baseSong.notes,
+    sedeId: baseSong.sedeId,
+    isLocalOverride: false,
+    originalSong: baseSong,
+    fallbackNotice
+  };
+}
 ```
 
-### 2.2 Servicio de Sincronización (`src/services/gitSyncService.ts`)
-```text
-ESTADO LOCAL EN localStorage:
-  - 'app_lyrics_last_sync': timestamp ISO última sincronización exitosa
-  - 'app_lyrics_synced_sedes': JSON array de sedeIds descargados exitosamente
-  - 'app_lyrics_sedes_cache': JSON array de SedeProfile[] descargados
+```ts
+// src/db/index.ts — dentro de initializeDatabase()
+async function migrateLegacySedeSongs(): Promise<void> {
+  const allSongs = await db.songs.toArray();
+  const allOverrides = await db.overrides.toArray();
+  const seedIds = new Set(SEED_SONGS.map(s => s.id));
 
-FUNCIÓN mergeRemoteSongs(remoteSongs):
-  SI remoteSongs no es array válido RETORNAR 0
-  contador = 0
-  PARA CADA song EN remoteSongs:
-    local = AWAIT db.songs.get(song.id)
-    SI (!local) O (song.updatedAt >= local.updatedAt):
-      AWAIT db.songs.put({ ...song, syncSource: 'remote' })
-      contador++
-  RETORNAR contador
+  for (const song of allSongs) {
+    if (song.syncSource !== 'local' || song.sedeId || seedIds.has(song.id)) continue;
 
-FUNCIÓN mergeRemoteOverrides(remoteOverrides):
-  SI remoteOverrides no es array válido RETORNAR 0
-  contador = 0
-  PARA CADA ov EN remoteOverrides:
-    local = AWAIT db.overrides.get(ov.id)
-    SI (!local) O (ov.updatedAt >= local.updatedAt):
-      AWAIT db.overrides.put({ ...ov, syncSource: 'remote' })
-      contador++
-  RETORNAR contador
+    const matchingOverrides = allOverrides.filter(
+      o => o.baseSongId === song.id && o.sedeId && o.sedeId !== 'general'
+    );
+    const uniqueSedes = [...new Set(matchingOverrides.map(o => o.sedeId))];
 
-FUNCIÓN syncGeneralCatalog(options?: { force?: boolean }):
-  SI navegador offline: RETORNAR { status: 'offline', ... }
-  ts = options?.force ? Date.now() : undefined
-
-  // 1. Descargar sedes.json (opcional; si falla usa fallback local)
-  respSedes = FETCH getRawFileUrl('catalog', 'sedes.json', ts)
-  SI respSedes.ok Y es array de SedeProfile válido:
-    Guardar en localStorage('app_lyrics_sedes_cache')
-
-  // 2. Descargar catalog.json
-  respCatalog = FETCH getRawFileUrl('catalog', 'catalog.json', ts)
-  SI !respCatalog.ok: LANZAR Error("No se pudo descargar catálogo general")
-  songs = await respCatalog.json()
-  updatedCount = AWAIT mergeRemoteSongs(songs)
-  Guardar timestamp en 'app_lyrics_last_sync'
-  RETORNAR { status: 'synced', updatedSongs: updatedCount, sedes: ... }
-
-FUNCIÓN syncSedeFromGitHub(sedeId, options?: { force?: boolean }):
-  SI !sedeId O sedeId == 'general' RETORNAR { status: 'skipped' }
-  SI navegador offline: RETORNAR { status: 'offline' }
-
-  branch = getSedeBranch(sedeId)
-  resp = FETCH getRawFileUrl(branch, 'overrides.json', ts)
-
-  SI resp.status == 404:
-    // La sede existe pero aún no tiene overrides publicados en Git
-    Marcar sedeId en 'app_lyrics_synced_sedes'
-    RETORNAR { status: 'synced', updatedOverrides: 0 }
-
-  SI !resp.ok: LANZAR Error(...)
-  overrides = await resp.json()
-  updatedCount = AWAIT mergeRemoteOverrides(overrides)
-  Marcar sedeId en 'app_lyrics_synced_sedes'
-  RETORNAR { status: 'synced', updatedOverrides: updatedCount }
+    if (uniqueSedes.length === 1) {
+      const ownerSede = uniqueSedes[0];
+      const ov = matchingOverrides[0];
+      await db.songs.put({
+        ...song,
+        originalKey: ov.customKey || song.originalKey,
+        sections: ov.customSections?.length ? ov.customSections : song.sections,
+        notes: song.notes || ov.localNotes,
+        sedeId: ownerSede
+      });
+      await db.overrides.delete(ov.id);
+    }
+  }
+}
 ```
 
-### 2.3 Resolución Segura y Fallback (`src/services/songResolver.ts`)
-```text
-FUNCIÓN resolveSongForDisplay(baseSong, activeSedeId, overrides, options?):
-  targetSedeId = options?.expectedSedeId || activeSedeId
-  SI !targetSedeId O targetSedeId == 'general': RETORNAR versión base sin aviso
+```ts
+// src/components/SongEditorModal.tsx — handleSave
+const isSedeExclusiveSong = Boolean(
+  activeSedeId !== 'general' && (!initialSong || initialSong.sedeId === activeSedeId)
+);
 
-  override = overrides.find(o => o.baseSongId == baseSong.id Y o.sedeId == targetSedeId)
-  SI override:
-    RETORNAR versión local con isLocalOverride = true
+const baseSongData: BaseSong = {
+  id: songId,
+  title: cleanTitle,
+  artist: initialSong?.artist,
+  originalKey: effectiveKey,
+  bpm: isMusicianMode && typeof bpm === 'number' ? bpm : initialSong?.bpm,
+  timeSignature: isMusicianMode ? timeSignature : (initialSong?.timeSignature || '4/4'),
+  sections,
+  tags: initialSong?.tags,
+  notes: isSedeExclusiveSong ? (localNotes.trim() || undefined) : initialSong?.notes,
+  sedeId: isSedeExclusiveSong ? activeSedeId : initialSong?.sedeId,
+  updatedAt: nowIso,
+  syncSource: initialSong?.syncSource || 'local'
+};
 
-  // Si se pidió una sede externa/específica que NO está sincronizada aún:
-  isSynced = options?.isSedeSynced ?? true
-  fallbackNotice = !isSynced
-    ? "Mostrando versión base del catálogo general (la adaptación de " + (options?.sedeLabel || targetSedeId) + " requiere conexión para sincronizarse)."
-    : undefined
-
-  RETORNAR { ...baseSong, isLocalOverride: false, fallbackNotice }
+if (!isSedeExclusiveSong && activeSedeId !== 'general') {
+  // Edición local de una canción del Catálogo General para esta sede => solo escribir en db.overrides
+  await db.overrides.put(override);
+} else {
+  // Canción del Catálogo General (super admin) o canción exclusiva de una sede => guardar en db.songs
+  await db.songs.put(baseSongData);
+  if (isSedeExclusiveSong) {
+    await db.overrides.delete(`${songId}_${activeSedeId}`);
+  }
+}
 ```
 
-### 2.4 Flujo en `src/App.tsx`
 ```text
-AL MONTAR App:
-  1. initializeDatabase() -> carga semillas inmediatas en 0ms si IndexedDB está vacío
-  2. Leer activeSedeId desde localStorage('app_lyrics_active_sede') || 'general'
-  3. Si navigator.onLine:
-       syncCatalogAndActiveSede(activeSedeId) en segundo plano (sin bloquear render)
+Flujo de visibilidad:
+1. App.tsx filtra `songs` con `isSongVisibleInSede(song, activeSedeId)` -> `visibleSongs`.
+2. `catalogEntries` solo mapea `visibleSongs`.
+3. `handleSelectSede(nextSedeId)`: limpia `setlistNavContext`, `songContextSedeId` y `selectedItemKey`; si la canción abierta (`selectedSongId`) pertenece a otra sede (`!isSongVisibleInSede(currentSong, nextSedeId)`), reinicia selección al primer canto visible de `nextSedeId` y vuelve a `'list'` en móvil para evitar falsos avisos de "canción sin descargar".
+4. SetlistManager.tsx filtra `songs` por `isSongVisibleInSede(song, effectiveListSedeId)` para poblar el selector "Agregar Canción al Culto".
+```
 
-AL CAMBIAR DE SEDE (handleSelectSede(newSedeId)):
-  1. Guardar newSedeId en estado y localStorage
-  2. Limpiar songSedeOverrideContext (si venía de un repertorio externo)
-  3. Si newSedeId != 'general' Y online:
-       AWAIT syncSedeFromGitHub(newSedeId)
+### B. Controles de Semitono `-` / `+` en `SongEditorModal`
+```ts
+// src/components/SongEditorModal.tsx
+const handleStepKeySemitone = (delta: number) => {
+  const nextKey = transposeChord(originalKey, delta);
+  setRawText(prev => transposeChordProText(prev, delta));
+  setOriginalKey(nextKey);
+};
 
-AL IMPORTAR REPERTORIO POR URL (#repertorio=...):
-  1. Descomprimir Setlist -> guardar en db.setlists
-  2. SI importedSetlist.sedeId != 'general' Y online:
-       AWAIT syncSedeFromGitHub(importedSetlist.sedeId)
-       Mostrar notificación confirmando importación + variantes de esa sede
-     SINO SI offline:
-       Mostrar notificación confirmando importación (usará catálogo general si falta variante)
+// Render junto al selector de tonalidad (una sola cajita compacta [ - | <select> | + ]):
+<div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl overflow-hidden focus-within:border-emerald-500">
+  <button type="button" onClick={() => handleStepKeySemitone(-1)} aria-label="Bajar medio tono">
+    <Minus />
+  </button>
+  <select value={originalKey} onChange={e => handleOriginalKeyChange(e.target.value)}>
+    {availableKeyOptions.map(...)}
+  </select>
+  <button type="button" onClick={() => handleStepKeySemitone(1)} aria-label="Subir medio tono">
+    <Plus />
+  </button>
+</div>
+```
 
-AL SELECCIONAR CANCIÓN DESDE SetlistManager:
-  - Pasar (songId, setlist.sedeId) para que activeDisplaySong utilice la sede del repertorio
-    y muestre fallbackNotice si esa sede externa aún no se sincronizó.
+### C. Barra Superior en 1 Fila + Navegación de Repertorio (`< | Repertorio | >`)
+```tsx
+// src/components/SetlistNavControls.tsx (nuevo componente compartido)
+export interface SetlistNavProps {
+  canPrev: boolean;
+  canNext: boolean;
+  onPrev: () => void;
+  onNext: () => void;
+  onReturnToSetlist: () => void;
+}
+
+function SetlistNavControls({ canPrev, canNext, onPrev, onNext, onReturnToSetlist }: SetlistNavProps) {
+  return (
+    <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl overflow-hidden shrink-0">
+      <button type="button" onClick={onPrev} disabled={!canPrev} aria-label="Canción anterior del repertorio">
+        <ChevronLeft />
+      </button>
+      <button type="button" onClick={onReturnToSetlist} title="Volver al repertorio">
+        Repertorio
+      </button>
+      <button type="button" onClick={onNext} disabled={!canNext} aria-label="Siguiente canción del repertorio">
+        <ChevronRight />
+      </button>
+    </div>
+  );
+}
+```
+
+```tsx
+// Estructura unificada en MusicianView y ReaderView (barra sticky en 1 sola fila):
+<div className="sticky top-2 z-30 ... flex items-center justify-between gap-1.5 sm:gap-2 flex-nowrap">
+  {/* Grupo Izquierdo: Tamaño de Letra + (si viene de repertorio) [< | Repertorio | >] */}
+  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 shrink-0">
+    <div className="...">[A-] [Type] [A+]</div>
+    {setlistNav && <SetlistNavControls {...setlistNav} />}
+  </div>
+
+  {/* Grupo Derecho: WakeLock (solo MusicianView, solo ícono en móvil) + Proyección (ícono en móvil) + Editar (solo ícono) */}
+  <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+    ...
+  </div>
+</div>
+```
+
+```ts
+// src/App.tsx — Contexto y navegación de Repertorio
+const [selectedSetlistId, setSelectedSetlistId] = useState<string | null>(null);
+const [setlistNavContext, setSetlistNavContext] = useState<{ setlistId: string; itemIndex: number } | null>(null);
+
+// Al abrir canción desde SetlistManager.onSelectSong(songId, sourceSedeId, itemKey, ctx):
+if (ctx) {
+  setSelectedSetlistId(ctx.setlistId);
+  setSetlistNavContext(ctx);
+}
+
+// Navegación < y >:
+function navigateToSetlistIndex(targetIndex: number) {
+  if (!activeNavSetlist) return;
+  const targetItem = activeNavSetlist.items[targetIndex];
+  if (!targetItem) return;
+  setSelectedSongId(targetItem.songId);
+  setIsExplicitSongSelection(true);
+  setSongContextSedeId(activeNavSetlist.sedeId || null);
+  setSelectedItemKey(targetItem.key || null);
+  setSetlistNavContext({ setlistId: activeNavSetlist.id, itemIndex: targetIndex });
+  setMobileView('detail');
+}
+
+// Al presionar "Repertorio":
+onReturnToSetlist: () => {
+  setSelectedSetlistId(activeNavSetlist.id);
+  setActiveTab('setlists');
+}
+
+// Al seleccionar una canción desde el catálogo, o pulsar tab Cancionero / Canciones, o cambiar sede:
+setSetlistNavContext(null);
 ```
 
 ---
 
-## 3. Impacto en Archivos
+## 3. Impacto
 
-| Archivo | Estado | Rol y Cambios |
-| :--- | :--- | :--- |
-| `src/config/gitConfig.ts` | **Nuevo** | Configuración desacoplada del repositorio (`javtr/app_ipuc_lyrics`), mapeo `sedeId → rama`, generador de URLs `raw.githubusercontent.com`. |
-| `src/services/gitSyncService.ts` | **Nuevo** | Servicio de lectura, validación JSON, merge no destructivo por `updatedAt` con Dexie y persistencia de sedes sincronizadas (`isSedeSynced`, `getSyncedSedes`). |
-| `src/types/index.ts` | Modificado | Añadir `syncSource?: 'seed' \| 'remote' \| 'local'` en `BaseSong` y `SedeSongOverride`; añadir `fallbackNotice?: string` en `DisplaySong` y tipos `SyncStatus` / `SyncResult`. |
-| `src/data/seedSongs.ts` | Modificado | Reemplazar `new Date().toISOString()` por timestamp constante `'2026-01-01T00:00:00.000Z'` en `SEED_SONGS` y `SEED_OVERRIDES`. |
-| `src/services/songResolver.ts` | Modificado | Soportar parámetro opcional `options?: ResolveSongOptions` (`expectedSedeId`, `isSedeSynced`, `sedeLabel`) para emitir `fallbackNotice` sin romper llamadas existentes. |
-| `src/components/SedeSelector.tsx` | Modificado | Recibir `sedes`, `syncStatus`, `lastSyncAt`, `onManualSync`; mostrar estado amigable de actualización y botón *"Actualizar cancionero"* (sin jerga Git). |
-| `src/components/ReaderView.tsx` | Modificado | Mostrar alerta discreta si `song.fallbackNotice` está presente. |
-| `src/components/MusicianView.tsx` | Modificado | Mostrar alerta discreta si `song.fallbackNotice` está presente. |
-| `src/components/SetlistManager.tsx` | Modificado | Pasar `currentSetlist.sedeId` en `onSelectSong(songId, sedeId)` al abrir una canción desde un repertorio. |
-| `src/App.tsx` | Modificado | Persistir `activeSedeId`, coordinar sincronización en arranque/online/cambio de sede/importación URL, gestionar contexto de sede del repertorio activo y pasar estado de sync a `SedeSelector`. |
-| `tests/gitSyncService.test.ts` | **Nuevo** | Pruebas unitarias con `fetch` mockeado y base simulada/Dexie: mapeo de ramas, merge por fecha, manejo resiliente de `404`/offline, persistencia de `syncedSedes` y verificación de `fallbackNotice` en `resolveSongForDisplay`. |
-| Ramas Git `catalog` y `sede/palestina` | **Nuevo (en Fase 2)** | Ramas huérfanas de datos en `javtr/app_ipuc_lyrics` con `sedes.json`, `catalog.json` (incluyendo una 4ª canción adicional para evidenciar la descarga real desde GitHub) y `overrides.json`. |
+| Archivo / Módulo | Tipo / Clase / Método afectado | Cambio |
+| --- | --- | --- |
+| `src/types/index.ts` | `BaseSong` | Añadir `sedeId?: string` y `notes?: string` |
+| `src/services/songResolver.ts` | `isSongVisibleInSede`, `toBaseDisplaySong`, `resolveAllSongsForDisplay` | Nueva función `isSongVisibleInSede`; propagar `notes`/`sedeId`; filtrar lista resuelta por sede |
+| `src/db/index.ts` | `migrateLegacySedeSongs`, `initializeDatabase` | Migración idempotente que asigna `sedeId` a canciones locales huérfanas con un único override de sede |
+| `src/components/SetlistNavControls.tsx` | `SetlistNavControls`, `SetlistNavProps` *(Nuevo)* | Control compartido `[ < | Repertorio | > ]` |
+| `src/components/MusicianView.tsx` | `MusicianViewProps`, `MusicianView` | Recibir `setlistNav?: SetlistNavProps`; quitar pill `Tono:`, `- / ↺ / +` y imports sin uso; mantener transposición derivada por `expectedKey` e indicar `Tono en repertorio` en cabecera si difiere; barra en `flex-nowrap` de 1 fila con `SetlistNavControls` a la derecha de `A-/A+` |
+| `src/components/ReaderView.tsx` | `ReaderViewProps`, `ReaderView` | Recibir `setlistNav?: SetlistNavProps`; insertar `SetlistNavControls` a la derecha de `A-/A+` en fila única `flex-nowrap` |
+| `src/components/SongEditorModal.tsx` | `SongEditorModal` (`handleStepKeySemitone`, `handleSave`, UI tonalidad) | Añadir botones `-` / `+` de semitono junto al selector `Tono`; guardar canciones nuevas o propias de sede directo en `db.songs` con `sedeId` y `notes` sin fugarse a `general` |
+| `src/components/SetlistManager.tsx` | `SetlistManagerProps`, `SetlistManager` | Soporte opcional controlado `selectedSetlistId` / `onSelectSetlistId`; pasar `{ setlistId, itemIndex }` en `onSelectSong`; filtrar selector inferior de canciones con `isSongVisibleInSede` |
+| `src/App.tsx` | `App` (`handleSelectSede`, `catalogEntries`, `openEditorForActiveSong`, `SetlistManager`, `MusicianView`, `ReaderView`) | Estado `selectedSetlistId` y `setlistNavContext`; filtrado por `isSongVisibleInSede` en catálogo y selección efectiva; preservar `sedeId`/`notes` al editar |
+| `tests/stabilization.test.ts` | Suites `[C2]`, `[E2]`, nuevas pruebas unitarias | Actualizar aserciones de `MusicianView` (sin `Bajar medio tono` / `Tono:`); cubrir aislamiento `isSongVisibleInSede`, migración en BD, botones `- / +` del editor y control `SetlistNavControls` en `ReaderView` / `MusicianView` |
 
 ---
 
-## 4. Ubicación Exacta de los Cambios
+## 4. Ubicación Exacta
 
-1. **`src/types/index.ts`**:
-   - Líneas `10-20` (`BaseSong`): añadir `syncSource?: 'seed' | 'remote' | 'local';` después de `updatedAt`.
-   - Líneas `22-31` (`SedeSongOverride`): añadir `syncSource?: 'seed' | 'remote' | 'local';` después de `updatedAt`.
-   - Líneas `33-45` (`DisplaySong`): añadir `fallbackNotice?: string;` después de `originalSong`.
-   - Líneas `78+` (final del archivo): añadir tipos `SyncStatus` y `SyncResult`.
-2. **`src/data/seedSongs.ts`**:
-   - Línea `12`, línea `57`, línea `91` y línea `129`: reemplazar `updatedAt: new Date().toISOString()` por constante `const SEED_TIMESTAMP = '2026-01-01T00:00:00.000Z';`.
-3. **`src/config/gitConfig.ts`** *(nuevo)*:
-   - Líneas `1-35`: definir `GIT_CONFIG`, `getSedeBranch`, `getRawFileUrl`.
-4. **`src/services/gitSyncService.ts`** *(nuevo)*:
-   - Líneas `1-200`: implementar `getStoredSedes`, `getSyncedSedes`, `isSedeSynced`, `getLastSyncAt`, `syncGeneralCatalog`, `syncSedeFromGitHub`, `syncCatalogAndSede`.
-5. **`src/services/songResolver.ts`**:
-   - Líneas `8-63` (`resolveSongForDisplay`): añadir 4º parámetro opcional `options?: { expectedSedeId?: string; isSedeSynced?: boolean; sedeLabel?: string }` y lógica de `fallbackNotice` antes del `return` final en línea `52`.
-6. **`src/components/SedeSelector.tsx`**:
-   - Líneas `6-12` (`SedeSelectorProps`): añadir `sedesList?: SedeProfile[]`, `syncStatus?: SyncStatus`, `lastSyncAt?: string | null`, `onManualSync?: () => void`.
-   - Líneas `20-29` (`SedeSelector`): inicializar/sincronizar estado `sedes` con `sedesList || SEDES_LIST`.
-   - Líneas `142-155` (pie del modal): añadir bloque de actualización manual del cancionero y última hora de sincronización encima del botón *"Registrar nueva Sede"*.
-7. **`src/components/ReaderView.tsx`**:
-   - Líneas `190-196` (debajo del artista en cabecera): renderizar banner discreto ámbar si `song.fallbackNotice` existe.
-8. **`src/components/MusicianView.tsx`**:
-   - Líneas `325-338` (debajo de metadatos, junto a notas locales): renderizar banner discreto ámbar si `song.fallbackNotice` existe.
-9. **`src/components/SetlistManager.tsx`**:
-   - Línea `23` (`SetlistManagerProps`): cambiar firma `onSelectSong: (songId: string, sourceSedeId?: string) => void;`.
-   - Línea `238` (botón del ítem en `currentSetlist.items.map`): llamar `onSelectSong(item.songId, currentSetlist.sedeId)`.
-10. **`src/App.tsx`**:
-    - Líneas `13-26`: importar funciones de `gitSyncService` y `SyncStatus`.
-    - Línea `30`: inicializar `activeSedeId` desde `localStorage.getItem('app_lyrics_active_sede') || 'general'` y añadir estado `songContextSedeId`, `sedesList`, `syncStatus`, `lastSyncAt`.
-    - Líneas `52-86` (`useEffect`): tras `initializeDatabase()`, ejecutar sincronización inicial si `navigator.onLine`; en `handleOnline`, re-sincronizar automáticamente; en `checkSharedUrl`, llamar `syncSedeFromGitHub(importedSetlist.sedeId)` si aplica.
-    - Líneas `104-108` (`activeDisplaySong`): pasar `expectedSedeId`, `isSedeSynced`, `sedeLabel` a `resolveSongForDisplay`.
-    - Líneas `168-174` (`SedeSelector`): conectar `onSelectSede` persistente + sincronización automática de la sede elegida, y pasar `sedesList`, `syncStatus`, `lastSyncAt`, `onManualSync`.
-    - Líneas `358-362` (`SetlistManager` `onSelectSong`): guardar `sourceSedeId` en `songContextSedeId`.
+1. **`src/types/index.ts`**
+   - Interface `BaseSong` (**líneas 22-33**): insertar `sedeId?: string;` y `notes?: string;` antes de `updatedAt: string;` (línea 31).
+
+2. **`src/services/songResolver.ts`**
+   - Función `toBaseDisplaySong` (**líneas 10-23**): incluir `notes: baseSong.notes,` y `sedeId: baseSong.sedeId,` en el objeto retornado (después de `sections: baseSong.sections,`, línea 18).
+   - Entre **líneas 23 y 25**: insertar y exportar `isSongVisibleInSede(song: BaseSong, targetSedeId: string): boolean`.
+   - Función `resolveAllSongsForDisplay` (**líneas 89-95**): filtrar `baseSongs.filter(song => isSongVisibleInSede(song, activeSedeId)).map(...)`.
+
+3. **`src/db/index.ts`**
+   - Función `initializeDatabase` (**líneas 24-34**): después del bloque `if (overrideCount === 0)` (línea 33), invocar `await migrateLegacySedeSongs();` implementada encima de `initializeDatabase`.
+
+4. **`src/components/SetlistNavControls.tsx`** *(archivo nuevo)*
+   - Exportar `SetlistNavProps` y `SetlistNavControls`.
+
+5. **`src/components/MusicianView.tsx`**
+   - Imports (**líneas 1-15**): retirar `useEffect`, `Music2`, `Minus`, `Plus`, `RotateCcw`; (**líneas 17-21**): retirar `transposeChord`; importar `SetlistNavControls, SetlistNavProps` desde `./SetlistNavControls`.
+   - Interface `MusicianViewProps` (**líneas 27-34**): agregar `setlistNav?: SetlistNavProps;`.
+   - Estado/cuerpo inicial (**líneas 46-68**): reemplazar `transposeOffset` (`useState`/`useEffect`) y `currentDisplayKey` por `const transposeOffset = expectedKey ? getSemitoneDifference(song.key, expectedKey) : 0;`.
+   - Barra superior (**líneas 97-201**):
+     - Reemplazar `flex-wrap` y padding en línea 97 por `p-2 sm:p-3.5 mb-4 sm:mb-6 shadow-xl flex items-center justify-between gap-1.5 sm:gap-2 flex-nowrap`.
+     - Eliminar completamente los bloques de `Tono: {currentDisplayKey}` y botones `- / ↺ / +` (**líneas 98-137**).
+     - Envolver ajuste `A- / A+` (**líneas 141-162**) + `{setlistNav && <SetlistNavControls {...setlistNav} />}` dentro del grupo izquierdo `flex items-center gap-1.5 sm:gap-2 min-w-0 shrink-0`.
+     - En el grupo derecho (**líneas 164-200**), compactar gap/padding (`gap-1 sm:gap-2 shrink-0`, `Proyección` en `p-1.5 sm:px-2.5 sm:py-1.5` e ícono + texto `hidden sm:inline`).
+   - Cabecera de tonalidad (**líneas 221-228**): mostrar `Tono en repertorio: {expectedKey}` si `expectedKey && expectedKey !== song.key`, junto a `Tono en sede` / `Tono guardado`.
+
+6. **`src/components/ReaderView.tsx`**
+   - Imports (**líneas 1-13**): importar `SetlistNavControls, SetlistNavProps` desde `./SetlistNavControls`.
+   - Interface `ReaderViewProps` (**líneas 14-20**): agregar `setlistNav?: SetlistNavProps;`.
+   - Desestructuración de props (**líneas 32-38**): incluir `setlistNav`.
+   - Barra superior (**líneas 69-117**):
+     - Asegurar `flex-nowrap` y `gap-1.5 sm:gap-2` en línea 69.
+     - Envolver los controles `A- / A+` (**líneas 71-91**) junto con `{setlistNav && <SetlistNavControls {...setlistNav} />}` en `<div className="flex items-center gap-1.5 sm:gap-2 min-w-0 shrink-0">`.
+
+7. **`src/components/SongEditorModal.tsx`**
+   - Imports (**líneas 3-11**): añadir `Minus, Plus` desde `lucide-react`; (**líneas 14-18**): añadir `transposeChord` desde `../services/chordParser`.
+   - Derivado antes de `canRestoreOverride` (**líneas 168-177**): definir `isSedeExclusiveSong = Boolean(activeSedeId !== 'general' && (!initialSong || initialSong.sedeId === activeSedeId))` y exigir `!isSedeExclusiveSong` dentro de `canRestoreOverride`.
+   - Junto a `handleOriginalKeyChange` (**líneas 180-186**): agregar `handleStepKeySemitone(delta: number)`.
+   - Método `handleSave` (**líneas 218-261**): asignar `sedeId` y `notes` en `baseSongData` y bifurcar entre `(!isSedeExclusiveSong && activeSedeId !== 'general')` (solo `db.overrides.put`) y guardado directo en `db.songs.put(baseSongData)` cuando la canción es exclusiva de la sede o del catálogo general.
+   - Selector de Tono (**líneas 349-362**): envolver `<select>` con botones `-` (`handleStepKeySemitone(-1)`) y `+` (`handleStepKeySemitone(1)`).
+
+8. **`src/components/SetlistManager.tsx`**
+   - Imports (**línea 23**): importar `isSongVisibleInSede` desde `../services/songResolver`.
+   - `SetlistManagerProps` (**líneas 26-36**): actualizar firma de `onSelectSong` a `(songId: string, sourceSedeId?: string, itemKey?: string, setlistContext?: { setlistId: string; itemIndex: number }) => void;` y añadir `selectedSetlistId?: string | null;` y `onSelectSetlistId?: (setlistId: string | null) => void;`.
+   - Estado `activeSetlistId` (**líneas 49-51**): sincronizar con prop opcional `selectedSetlistId`/`onSelectSetlistId`.
+   - Lista filtrable de canciones para agregar (**líneas 57, 84-96, 433-452**): derivar `selectableSongs = songs.filter(s => isSongVisibleInSede(s, effectiveListSedeId))` y usarla en inicialización de `selectedSongToAdd` y opciones del `<select>`.
+   - Botón del ítem en lista (**línea 379**): pasar cuarto argumento `{ setlistId: currentSetlist.id, itemIndex: idx }` a `onSelectSong`.
+
+9. **`src/App.tsx`**
+   - Imports (**línea 17**): importar `isSongVisibleInSede` desde `./services/songResolver`; importar `SetlistNavProps` desde `./components/SetlistNavControls`.
+   - Estados en `App` (**líneas 48-52**): añadir `selectedSetlistId` y `setlistNavContext`.
+   - `handleSelectSede` (**líneas 99-112**): limpiar `setSetlistNavContext(null)` y si la canción activa (`selectedSongId`) no es visible en `nextSedeId`, restablecer selección a una canción visible y `setMobileView('list')`.
+   - Derivados del catálogo (**líneas 197-221**): calcular `visibleSongs = songs.filter(s => isSongVisibleInSede(s, activeSedeId))` para `catalogEntries`, y `effectiveSongs = songs.filter(s => isSongVisibleInSede(s, effectiveSedeId))` para `foundSelectedSong` / `activeBaseSong`. Construir `activeNavSetlist`, `navigateToSetlistIndex` y `setlistNav`.
+   - `openEditorForActiveSong` (**líneas 231-243**): copiar `sedeId: activeBaseSong.sedeId` y `notes: activeDisplaySong.notes` en `editableSong`.
+   - Limpieza de `setlistNavContext` al cambiar a catálogo o pulsar canción del catálogo (**líneas 278-283, 317-321, 420-426, 500-510, 575-582**).
+   - Props de `<MusicianView>` y `<ReaderView>` (**líneas 523-539**): pasar `setlistNav={setlistNav}`.
+   - Props de `<SetlistManager>` (**líneas 551-568**): pasar `selectedSetlistId`, `onSelectSetlistId` y actualizar `onSelectSong` para guardar `setlistNavContext`.
+
+10. **`tests/stabilization.test.ts`**
+    - Prueba `[C2]` (**líneas 129-172**): adaptar expectativas tras retirar `Tono:` pill y botones de semitono de `MusicianView`; validar que `expectedKey="A"` sigue transponiendo acordes renderizados y que `SetlistNavControls` renderiza `[ < | Repertorio | > ]`.
+    - Prueba `[E2]` (**líneas 348-375**): verificar que `ReaderView` acepta `setlistNav` e incluye el botón central `Repertorio` junto a los botones anterior/siguiente en barra `flex-nowrap`.
+    - Nuevas pruebas en `tests/stabilization.test.ts`:
+      - Verificar `isSongVisibleInSede` y que `SongEditorModal` al guardar una canción nueva en `sede-palestina` asigna `sedeId: 'sede-palestina'` en `db.songs` sin filtrarse a `general` ni `sede-central`, más migración en `initializeDatabase()`.
+      - Verificar botones `-` / `+` de semitono (`Bajar medio tono` / `Subir medio tono`) en `SongEditorModal`.
 
 ---
 
-## 5. Plan de Verificación (en Fase 2 tras aprobación)
+## 5. Verificación Planificada (en Fase 2, tras aprobación)
 
-1. **Pruebas Unitarias (`tests/gitSyncService.test.ts` + suite existente):**
-   - Simular descarga exitosa de `catalog.json` y `sedes.json` -> verificar inserción en IndexedDB (usando almacenamiento en memoria / mocks limpios para tests Node sin `indexedDB` nativo si Vitest corre en Node).
-   - Simular actualización remota con fecha mayor vs cambio local más reciente -> validar que nunca sobrescribe cambios locales más nuevos pero sí actualiza semillas antiguas (`2026-01-01`).
-   - Simular sede sin overrides en Git (`404`) y modo offline -> validar resiliencia sin excepciones.
-   - Validar `resolveSongForDisplay` con `expectedSedeId` no sincronizada -> verificar `fallbackNotice` y letra base intacta.
-2. **Chequeo de Compilación y Pruebas Completas:**
-   - `npx tsc --noEmit` (0 errores).
-   - `npm test` (todas las suites y tests aprobados).
-   - `npm run build` (build de producción Vite + PWA limpio).
-3. **Verificación en Vivo contra GitHub Real:**
-   - Confirmar que las ramas `catalog` y `sede/palestina` existen en `https://github.com/javtr/app_ipuc_lyrics` y que sus URLs `raw.githubusercontent.com` responden HTTP `200` con JSON válido.
+1. `npx tsc --noEmit` (verificar compilación TypeScript estricta sin variables/imports sin uso).
+2. `npm test` (ejecutar Vitest con toda la suite de estabilización + casos nuevos).
+3. `npm run build` (verificar empaquetado Vite de producción).

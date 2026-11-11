@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Flag, X, Send, CheckCircle2 } from 'lucide-react';
 import { BaseSong, CorrectionSuggestion } from '../types';
 import { db } from '../db';
@@ -20,6 +21,23 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({
   const [suggestedFix, setSuggestedFix] = useState<string>('');
   const [reportedBy, setReportedBy] = useState<string>('');
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
+
+  useEffect(() => {
+    setSectionLabel(song.sections[0]?.label || 'General');
+    setSuggestedFix('');
+    setIsSubmitted(false);
+  }, [song.id, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -46,10 +64,17 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({
     }, 2500);
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg p-6 shadow-2xl relative">
+  const modalMarkup = (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg p-6 shadow-2xl relative animate-in zoom-in-95 duration-200"
+      >
         <button
+          type="button"
           onClick={onClose}
           className="absolute top-4 right-4 text-slate-400 hover:text-white"
         >
@@ -67,9 +92,9 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({
         {isSubmitted ? (
           <div className="py-8 text-center space-y-2">
             <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto" />
-            <h4 className="text-sm font-bold text-white">¡Sugerencia Registrada!</h4>
-            <p className="text-xs text-slate-400 max-w-xs mx-auto">
-              El administrador central revisará tu observación para aplicarla al repositorio general sin afectar a las sedes.
+            <h4 className="text-sm font-bold text-white">¡Sugerencia Guardada en Cola Local!</h4>
+            <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
+              Tu corrección quedó guardada en este dispositivo y se enviará al repositorio central cuando se active el módulo en línea (Etapa B).
             </p>
           </div>
         ) : (
@@ -132,7 +157,7 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>Enviar Sugerencia</span>
+                <span>Guardar Sugerencia</span>
               </button>
             </div>
           </form>
@@ -140,4 +165,10 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({
       </div>
     </div>
   );
+
+  if (typeof document !== 'undefined') {
+    return createPortal(modalMarkup, document.body);
+  }
+
+  return modalMarkup;
 };
