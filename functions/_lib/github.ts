@@ -108,6 +108,36 @@ export async function getJsonFile<T>(
 }
 
 /**
+ * Lee el texto JSON crudo directamente vía GitHub REST API sin decodificación Base64 en el Worker.
+ */
+export async function getRawJsonText(
+  env: Env,
+  branch: string,
+  filePath: string
+): Promise<{ status: 200; rawText: string } | { status: 404 }> {
+  const res = await githubFetch(
+    env,
+    `/contents/${encodeRepoPath(filePath)}?ref=${encodeURIComponent(branch)}`,
+    {
+      headers: {
+        Accept: 'application/vnd.github.raw+json'
+      }
+    }
+  );
+
+  if (res.status === 404) {
+    return { status: 404 };
+  }
+
+  if (!res.ok) {
+    throw new Error(`Error al leer ${filePath} en ${branch} (HTTP ${res.status})`);
+  }
+
+  const rawText = await res.text();
+  return { status: 200, rawText };
+}
+
+/**
  * Crea o actualiza un archivo JSON en la rama indicada usando la API de Contenidos de GitHub.
  */
 export async function putJsonFile(

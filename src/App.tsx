@@ -88,6 +88,7 @@ export function App() {
   const activeSedeRef = useRef(activeSedeId);
   activeSedeRef.current = activeSedeId;
   const importTimerRef = useRef<number | null>(null);
+  const lastAutoSyncMsRef = useRef<number>(0);
 
   const toggleMusicianMode = () => {
     const nextMode = !isMusicianMode;
@@ -101,6 +102,7 @@ export function App() {
       return;
     }
 
+    lastAutoSyncMsRef.current = Date.now();
     setSyncStatus('syncing');
     const flushRes = await flushPendingSyncQueue();
     if (flushRes.authExpired) {
@@ -167,6 +169,17 @@ export function App() {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        if (Date.now() - lastAutoSyncMsRef.current >= 10_000) {
+          runSync(activeSedeRef.current, false).catch(err =>
+            console.warn('Error al sincronizar al volver a la app:', err)
+          );
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     // Detección e importación de repertorios compartidos vía URL hash (#repertorio=...)
     const checkSharedUrl = async () => {
       if (window.location.hash.startsWith('#repertorio=')) {
@@ -208,6 +221,7 @@ export function App() {
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('hashchange', checkSharedUrl);
       if (importTimerRef.current) {
         clearTimeout(importTimerRef.current);

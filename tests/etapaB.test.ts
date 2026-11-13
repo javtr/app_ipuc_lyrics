@@ -5,6 +5,7 @@ import { onRequestPost as authPost } from '../functions/api/auth';
 import { onRequestPost as commitPost } from '../functions/api/commit';
 import { onRequestPost as suggestPost } from '../functions/api/suggest-correction';
 import { onRequestPost as createSedePost } from '../functions/api/create-sede';
+import { onRequestGet as syncGet } from '../functions/api/sync';
 import { Env } from '../functions/_lib/types';
 import {
   flushPendingSyncQueue,
@@ -12,7 +13,7 @@ import {
   saveStoredSession,
   submitCorrectionSuggestion
 } from '../src/services/cloudApiService';
-import { syncSedeFromGitHub } from '../src/services/gitSyncService';
+import { syncGeneralCatalog, syncSedeFromGitHub } from '../src/services/gitSyncService';
 import { db } from '../src/db';
 import { BaseSong, SedeSongOverride } from '../src/types';
 
@@ -483,5 +484,94 @@ describe('Etapa B: Cloudflare Pages Functions, JWT, Issues y Cola Offline', () =
     expect(putSuggSpy).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'sugg_1', syncedToCloud: true, issueNumber: 7 })
     );
+  });
+
+  it('GET /api/sync valida lista blanca, retorna 404 con marcador y lee JSON crudo con Accept raw+json', async () => {
+    // 1. Archivo o rama no permitida => 400
+    const badFileRes = await syncGet({
+      request: new Request('https://example.com/api/sync?branch=catalog&file=package.json'),
+      env: testEnv
+    });
+    expect(badFileRes.status).toBe(400);
+
+    const badBranchRes = await syncGet({
+      request: new Request('https://example.com/api/sync?branch=master&file=catalog.json'),
+      env: testEnv
+    });
+    expect(badBranchRes.status).toBe(400);
+
+    // 2. Archivo opcional faltante en GitHub => 404 con { notFound: true }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+    const missingRes = await syncGet({
+      request: new Request('https://example.com/api/sync?branch=sede/palestina&file=overrides.json'),
+      env: testEnv
+    });
+    expect(missingRes.status).toBe(404);
+    expect(await missingRes.json()).toMatchObject({ notFound: true, status: 404 });
+
+    // 3. Lectura válida con fresh=1 => devuelve raw JSON con Cache-Control: no-store
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([{ id: 's1', title: 'Canto', originalKey: 'G', sections: [], updatedAt: '2026-11-13T17:00:00.000Z' }]), {
+        status: 200
+      })
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const okRes = await syncGet({
+      request: new Request('https://example.com/api/sync?branch=catalog&file=catalog.json&fresh=1'),
+      env: testEnv
+    });
+    expect(okRes.status).toBe(200);
+    expect(okRes.headers.get('Cache-Control')).toBe('no-store');
+    const body = (await okRes.json()) as Array<{ id: string }>;
+    expect(body[0].id).toBe('s1');
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.stringContaining('/contents/catalog.json?ref=catalog'),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Accept: 'application/vnd.github.raw+json' })
+      })
+    );
+  });
+
+  it('fetchJsonFromGit hace fallback a raw.githubusercontent.com cuando /api/sync devuelve HTML o error 502', async () => {
+    vi.stubGlobal('navigator', { onLine: true });
+    vi.spyOn(db.songs, 'toArray').mockResolvedValue([]);
+    const bulkPutSpy = vi.spyOn(db.songs, 'bulkPut').mockResolvedValue('ok' as never);
+
+    const remoteSong: BaseSong = {
+      id: 'canto-fallback',
+      title: 'Canto Fallback',
+      originalKey: 'D',
+      sections: [{ id: 'v1', type: 'verse', label: 'Verso 1', lines: ['Santo'] }],
+      updatedAt: '2026-11-13T17:30:00.000Z'
+    };
+
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.startsWith('/api/sync')) {
+        if (url.includes('sedes.json')) {
+          return new Response('<!doctype html><html></html>', {
+            status: 200,
+            headers: { 'Content-Type': 'text/html' }
+          });
+        }
+        return new Response(JSON.stringify({ error: 'Upstream fail' }), {
+          status: 502,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (url.includes('raw.githubusercontent.com') && url.includes('catalog.json')) {
+        return new Response(JSON.stringify([remoteSong]), { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await syncGeneralCatalog({ force: true });
+    expect(res.status).toBe('synced');
+    expect(res.updatedSongs).toBe(1);
+    expect(bulkPutSpy).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'canto-fallback', syncSource: 'remote' })
+    ]);
   });
 });

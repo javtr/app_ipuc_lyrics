@@ -22,6 +22,7 @@ export interface PagesContext {
   request: Request;
   env: Env;
   params?: Record<string, string>;
+  waitUntil?: (promise: Promise<unknown>) => void;
 }
 
 export interface BaseSongPayload {

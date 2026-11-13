@@ -147,6 +147,34 @@ async function fetchJsonFromGit<T>(
   filePath: string,
   forceRefresh: boolean
 ): Promise<{ status: number; data?: T }> {
+  const proxyParams = new URLSearchParams({ branch, file: filePath });
+  if (forceRefresh) {
+    proxyParams.set('fresh', '1');
+  }
+  const proxyUrl = `/api/sync?${proxyParams.toString()}`;
+
+  try {
+    const proxyRes = await fetch(
+      proxyUrl,
+      forceRefresh ? { cache: 'no-store' } : undefined
+    );
+    const contentType = proxyRes.headers.get('content-type') || '';
+
+    if (proxyRes.status === 404 && contentType.includes('application/json')) {
+      const payload = (await proxyRes.json()) as { notFound?: boolean };
+      if (payload?.notFound === true) {
+        return { status: 404 };
+      }
+    }
+
+    if (proxyRes.ok && !contentType.includes('text/html')) {
+      const data = (await proxyRes.json()) as T;
+      return { status: proxyRes.status, data };
+    }
+  } catch {
+    // Fallback silencioso a GitHub Raw ante entorno dev local o contingencia del proxy
+  }
+
   const cacheBust = forceRefresh ? Date.now() : undefined;
   const url = getRawFileUrl(branch, filePath, cacheBust);
   const response = await fetch(
