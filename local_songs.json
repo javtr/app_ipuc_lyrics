@@ -1,0 +1,32 @@
+[
+  {
+    "id": "test-palestina",
+    "title": "Test Palestina",
+    "originalKey": "G",
+    "timeSignature": "4/4",
+    "sections": [
+      {
+        "id": "sec_1_verse",
+        "type": "verse",
+        "label": "Verso 1",
+        "lines": [
+          "Test Palestina",
+          "Escribe aquí la letra de tu primera estrofa",
+          "Cada línea representa una frase del canto"
+        ]
+      },
+      {
+        "id": "sec_2_chorus",
+        "type": "chorus",
+        "label": "Coro",
+        "lines": [
+          "¡Alabado sea el Señor!",
+          "Por siempre y para siempre"
+        ]
+      }
+    ],
+    "sedeId": "sede-palestina",
+    "updatedAt": "2026-11-13T22:19:17.587Z",
+    "syncSource": "remote"
+  }
+]
