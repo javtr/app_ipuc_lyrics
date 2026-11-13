@@ -90,7 +90,7 @@
     "id": "grande-es-tu-fidelidad_sede-palestina",
     "baseSongId": "grande-es-tu-fidelidad",
     "sedeId": "sede-palestina",
-    "customTitle": "Grande es Tu Fidelidad EdPalestina v03",
+    "customTitle": "Grande es Tu Fidelidad EdPalestina v04",
     "customKey": "D",
     "customSections": [
       {
@@ -98,7 +98,7 @@
         "type": "verse",
         "label": "Verso 1",
         "lines": [
-          "EdPalestina v03",
+          "EdPalestina v04",
           "Oh [D]Dios eter[G]no, Tu [A]misericor[D]dia",
           "Ni una [G]sombra de [D]duda ten[E7]drá[A]",
           "Tu compa[A7]sión y bon[D]dad nunca [G]fallan",
@@ -117,7 +117,7 @@
         ]
       }
     ],
-    "updatedAt": "2026-11-13T22:51:25.934Z",
+    "updatedAt": "2026-11-13T22:53:40.082Z",
     "syncSource": "remote"
   }
 ]
