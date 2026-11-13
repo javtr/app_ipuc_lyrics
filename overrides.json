@@ -56,7 +56,7 @@
     "id": "cuan-grande-es-el_sede-palestina",
     "baseSongId": "cuan-grande-es-el",
     "sedeId": "sede-palestina",
-    "customTitle": "Cuán Grande es Él editada",
+    "customTitle": "Cuán Grande es Él editadaPalestina",
     "customKey": "A",
     "customSections": [
       {
@@ -64,6 +64,7 @@
         "type": "verse",
         "label": "Verso 1",
         "lines": [
+          "Editada palestina",
           "Se[A]ñor mi Dios al contemplar [D]los cielos",
           "El [A]firmamento y las [E]estrellas [A]mil",
           "Al oír Tu voz en los po[D]tentes truenos",
@@ -82,7 +83,7 @@
         ]
       }
     ],
-    "updatedAt": "2026-11-13T22:14:26.481Z",
+    "updatedAt": "2026-11-13T22:18:53.584Z",
     "syncSource": "remote"
   }
 ]
