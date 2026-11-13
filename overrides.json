@@ -85,5 +85,39 @@
     ],
     "updatedAt": "2026-11-13T22:21:45.765Z",
     "syncSource": "remote"
+  },
+  {
+    "id": "grande-es-tu-fidelidad_sede-palestina",
+    "baseSongId": "grande-es-tu-fidelidad",
+    "sedeId": "sede-palestina",
+    "customTitle": "Grande es Tu Fidelidad EdPalestina",
+    "customKey": "D",
+    "customSections": [
+      {
+        "id": "sec_1_verse",
+        "type": "verse",
+        "label": "Verso 1",
+        "lines": [
+          "EdPalestina",
+          "Oh [D]Dios eter[G]no, Tu [A]misericor[D]dia",
+          "Ni una [G]sombra de [D]duda ten[E7]drá[A]",
+          "Tu compa[A7]sión y bon[D]dad nunca [G]fallan",
+          "Y por los [D]siglos el [A7]mismo se[D]rás"
+        ]
+      },
+      {
+        "id": "sec_2_chorus",
+        "type": "chorus",
+        "label": "Coro",
+        "lines": [
+          "[A]¡Grande es Tu [D]fidelidad! [B7]¡Grande es Tu [Em]fidelidad!",
+          "[A7]Cada ma[D]ñana la [A]veo bril[E7]lar[A]",
+          "[A7]Todo lo [D]que he necesitado, [G]Tu mano [Gm]fiel lo dio",
+          "[D]¡Grande es Tu [A7]fideli[D]dad!"
+        ]
+      }
+    ],
+    "updatedAt": "2026-11-13T22:24:05.201Z",
+    "syncSource": "remote"
   }
 ]
