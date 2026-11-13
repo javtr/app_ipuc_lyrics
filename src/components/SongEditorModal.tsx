@@ -34,12 +34,16 @@ interface SongEditorModalProps {
   originalSongTitle?: string;
   initialNotes?: string;
   hasLocalOverride?: boolean;
+  canEditGeneral?: boolean;
   activeSedeId: string;
   activeSedeLabel?: string;
   isMusicianMode: boolean;
   existingSongIds?: string[];
   onClose: () => void;
-  onSave: (savedSong: BaseSong) => void;
+  onSave: (
+    savedSong: BaseSong,
+    meta?: { override?: SedeSongOverride; isSedeExclusive?: boolean }
+  ) => void;
   onDeleteSong?: (songId: string) => Promise<void> | void;
   onRestoreOverride?: (songId: string) => Promise<void> | void;
 }
@@ -61,6 +65,7 @@ export const SongEditorModal: React.FC<SongEditorModalProps> = ({
   originalSongTitle,
   initialNotes,
   hasLocalOverride = false,
+  canEditGeneral = false,
   activeSedeId,
   activeSedeLabel,
   isMusicianMode,
@@ -173,7 +178,9 @@ Por siempre y para siempre`);
   );
 
   const canDeleteLocalSong = Boolean(
-    initialSong && onDeleteSong && initialSong.syncSource === 'local'
+    initialSong &&
+      onDeleteSong &&
+      (initialSong.syncSource === 'local' || isSedeExclusiveSong || canEditGeneral)
   );
   const canRestoreOverride = Boolean(
     initialSong &&
@@ -242,7 +249,7 @@ Por siempre y para siempre`);
       notes: isSedeExclusiveSong ? (localNotes.trim() || undefined) : initialSong?.notes,
       sedeId: isSedeExclusiveSong ? activeSedeId : initialSong?.sedeId,
       updatedAt: nowIso,
-      syncSource: initialSong?.syncSource || 'local'
+      syncSource: 'local'
     };
 
     if (!isSedeExclusiveSong && activeSedeId !== 'general') {
@@ -268,14 +275,15 @@ Por siempre y para siempre`);
       };
 
       await db.overrides.put(override);
+      onSave(baseSongData, { override, isSedeExclusive: false });
     } else {
       await db.songs.put(baseSongData);
       if (isSedeExclusiveSong) {
         await db.overrides.delete(`${songId}_${activeSedeId}`);
       }
+      onSave(baseSongData, { isSedeExclusive: isSedeExclusiveSong });
     }
 
-    onSave(baseSongData);
     onClose();
   };
 

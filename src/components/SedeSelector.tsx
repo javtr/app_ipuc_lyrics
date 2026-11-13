@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Church, Wifi, WifiOff, Plus, Check, X, RefreshCw } from 'lucide-react';
-import { SedeProfile, SyncStatus } from '../types';
+import { AdminSession, SedeProfile, SyncStatus } from '../types';
 import { normalizeSedeSlug, saveCustomSede } from '../services/gitSyncService';
 
 interface SedeSelectorProps {
@@ -14,6 +14,8 @@ interface SedeSelectorProps {
   syncStatus?: SyncStatus;
   lastSyncAt?: string | null;
   onManualSync?: () => void;
+  adminSession?: AdminSession | null;
+  onRemoteCreateSede?: (profile: SedeProfile) => Promise<void>;
 }
 
 export const SEDES_LIST: SedeProfile[] = [
@@ -38,12 +40,16 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
   sedesList,
   syncStatus = 'idle',
   lastSyncAt,
-  onManualSync
+  onManualSync,
+  adminSession,
+  onRemoteCreateSede
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false);
   const [sedes, setSedes] = useState<SedeProfile[]>(sedesList && sedesList.length > 0 ? sedesList : SEDES_LIST);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newSedeName, setNewSedeName] = useState('');
+  const [isCreatingRemote, setIsCreatingRemote] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!sedesList || sedesList.length === 0) return;
@@ -68,10 +74,10 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
 
   const currentSede = sedes.find(s => s.id === activeSedeId) || sedes[0];
 
-  const handleCreateSede = (e: React.FormEvent) => {
+  const handleCreateSede = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = newSedeName.trim();
-    if (!cleanName) return;
+    if (!cleanName || isCreatingRemote) return;
 
     const slug = normalizeSedeSlug(cleanName);
     const id = slug.startsWith('sede-') ? slug : `sede-${slug}`;
@@ -82,7 +88,21 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
       shortName: cleanName
     };
 
-    saveCustomSede(newProfile);
+    setCreateError(null);
+    if (adminSession?.role === 'master' && isOnline && onRemoteCreateSede) {
+      setIsCreatingRemote(true);
+      try {
+        await onRemoteCreateSede(newProfile);
+      } catch (err) {
+        setCreateError(err instanceof Error ? err.message : 'Error al registrar sede en la nube');
+        setIsCreatingRemote(false);
+        return;
+      }
+      setIsCreatingRemote(false);
+    } else {
+      saveCustomSede(newProfile);
+    }
+
     setSedes(prev => (prev.some(s => s.id === id) ? prev : [...prev, newProfile]));
     onSelectSede(id);
     setNewSedeName('');
@@ -228,7 +248,9 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
               Crear Nueva Sede
             </h3>
             <p className="text-xs text-slate-400 mt-1">
-              Esta acción crea una nueva rama independiente en la arquitectura Git detrás de escena.
+              {adminSession?.role === 'master' && isOnline
+                ? 'Como Administrador General, la sede se registrará y habilitará en la nube.'
+                : 'Se creará localmente en este dispositivo (inicia sesión como Administrador General para publicarla a toda la iglesia).'}
             </p>
 
             <form onSubmit={handleCreateSede} className="mt-4 space-y-4">
@@ -246,19 +268,27 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
                 />
               </div>
 
+              {createError && (
+                <p className="text-xs text-rose-400">{createError}</p>
+              )}
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
+                  onClick={() => {
+                    setCreateError(null);
+                    setShowAddModal(false);
+                  }}
                   className="px-4 py-2 rounded-lg text-xs font-medium text-slate-400 hover:bg-slate-800 transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+                  disabled={isCreatingRemote}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 transition-colors"
                 >
-                  Confirmar y Crear Sede
+                  {isCreatingRemote ? 'Registrando...' : 'Confirmar y Crear Sede'}
                 </button>
               </div>
             </form>

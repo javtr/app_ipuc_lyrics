@@ -92,4 +92,31 @@ export interface CorrectionSuggestion {
   suggestedFix: string;
   reportedBy: string;
   createdAt: string;
+  syncedToCloud?: boolean;
+  issueNumber?: number;
+}
+
+export type AdminRole = 'master' | 'sede';
+
+export interface AdminSession {
+  token: string;
+  role: AdminRole;
+  sedeId: string;
+  expiresAt: number;
+}
+
+export type PendingSyncAction =
+  | 'upsert_song'
+  | 'delete_song'
+  | 'upsert_override'
+  | 'delete_override';
+
+export interface PendingSyncOperation {
+  id: string;
+  action: PendingSyncAction;
+  targetSedeId: string;
+  song?: BaseSong;
+  songId?: string;
+  override?: SedeSongOverride;
+  createdAt: string;
 }

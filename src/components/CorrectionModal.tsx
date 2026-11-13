@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Flag, X, Send, CheckCircle2 } from 'lucide-react';
 import { BaseSong, CorrectionSuggestion } from '../types';
-import { db } from '../db';
+import { submitCorrectionSuggestion } from '../services/cloudApiService';
 
 interface CorrectionModalProps {
   song: BaseSong;
@@ -20,12 +20,13 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({
   );
   const [suggestedFix, setSuggestedFix] = useState<string>('');
   const [reportedBy, setReportedBy] = useState<string>('');
-  const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitOutcome, setSubmitOutcome] = useState<{ synced: boolean; issueNumber?: number } | null>(null);
 
   useEffect(() => {
     setSectionLabel(song.sections[0]?.label || 'General');
     setSuggestedFix('');
-    setIsSubmitted(false);
+    setSubmitOutcome(null);
   }, [song.id, isOpen]);
 
   useEffect(() => {
@@ -43,8 +44,9 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!suggestedFix.trim()) return;
+    if (!suggestedFix.trim() || isSubmitting) return;
 
+    setIsSubmitting(true);
     const suggestion: CorrectionSuggestion = {
       id: `sugg_${Date.now()}`,
       songId: song.id,
@@ -55,13 +57,17 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({
       createdAt: new Date().toISOString()
     };
 
-    await db.suggestions.add(suggestion);
-    setIsSubmitted(true);
-    setTimeout(() => {
-      setIsSubmitted(false);
-      setSuggestedFix('');
-      onClose();
-    }, 2500);
+    try {
+      const result = await submitCorrectionSuggestion(suggestion);
+      setSubmitOutcome({ synced: result.synced, issueNumber: result.issueNumber });
+      setTimeout(() => {
+        setSubmitOutcome(null);
+        setSuggestedFix('');
+        onClose();
+      }, 2500);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const modalMarkup = (
@@ -89,12 +95,18 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({
           Canción: <strong className="text-slate-200">{song.title}</strong>
         </p>
 
-        {isSubmitted ? (
+        {submitOutcome ? (
           <div className="py-8 text-center space-y-2">
             <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto" />
-            <h4 className="text-sm font-bold text-white">¡Sugerencia Guardada en Cola Local!</h4>
+            <h4 className="text-sm font-bold text-white">
+              {submitOutcome.synced
+                ? `¡Reporte Enviado al Equipo Central${submitOutcome.issueNumber ? ` (#${submitOutcome.issueNumber})` : ''}!`
+                : '¡Sugerencia Guardada en Cola Local!'}
+            </h4>
             <p className="text-xs text-slate-400 max-w-xs mx-auto leading-relaxed">
-              Tu corrección quedó guardada en este dispositivo y se enviará al repositorio central cuando se active el módulo en línea (Etapa B).
+              {submitOutcome.synced
+                ? 'El administrador general recibió tu sugerencia para revisarla y aplicarla en el catálogo oficial.'
+                : 'Tu corrección quedó guardada en este dispositivo y se enviará automáticamente al recuperar conexión.'}
             </p>
           </div>
         ) : (
@@ -154,10 +166,11 @@ export const CorrectionModal: React.FC<CorrectionModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors"
+                disabled={isSubmitting}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 transition-colors"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>Guardar Sugerencia</span>
+                <span>{isSubmitting ? 'Enviando...' : 'Guardar Sugerencia'}</span>
               </button>
             </div>
           </form>

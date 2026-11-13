@@ -19,6 +19,7 @@ const STORAGE_KEYS = {
 interface SyncableTable<T extends { id: string; updatedAt: string; syncSource?: SyncSource }> {
   toArray(): Promise<T[]>;
   bulkPut(items: T[]): Promise<unknown>;
+  bulkDelete?(keys: string[]): Promise<unknown>;
 }
 
 function readStorage(key: string): string | null {
@@ -102,12 +103,12 @@ function shouldApplyRemoteUpdate<T extends { updatedAt: string; syncSource?: Syn
 
 async function mergeRemoteRecords<T extends { id: string; updatedAt: string; syncSource?: SyncSource }>(
   table: SyncableTable<T>,
-  remoteItems: T[]
+  remoteItems: T[],
+  pruningScopeFilter?: (localItem: T) => boolean
 ): Promise<number> {
-  if (remoteItems.length === 0) return 0;
-
   const existingRecords = await table.toArray();
   const existingMap = new Map(existingRecords.map(record => [record.id, record]));
+  const remoteIdSet = new Set(remoteItems.map(item => item.id));
 
   const recordsToUpsert: T[] = [];
   for (const item of remoteItems) {
@@ -121,7 +122,24 @@ async function mergeRemoteRecords<T extends { id: string; updatedAt: string; syn
     await table.bulkPut(recordsToUpsert);
   }
 
-  return recordsToUpsert.length;
+  let deletedCount = 0;
+  if (pruningScopeFilter && typeof table.bulkDelete === 'function') {
+    const idsToDelete = existingRecords
+      .filter(
+        local =>
+          pruningScopeFilter(local) &&
+          local.syncSource === 'remote' &&
+          !remoteIdSet.has(local.id)
+      )
+      .map(local => local.id);
+
+    if (idsToDelete.length > 0) {
+      await table.bulkDelete(idsToDelete);
+      deletedCount = idsToDelete.length;
+    }
+  }
+
+  return recordsToUpsert.length + deletedCount;
 }
 
 async function fetchJsonFromGit<T>(
@@ -320,8 +338,8 @@ export async function syncGeneralCatalog(options?: { force?: boolean }): Promise
 }
 
 /**
- * Descarga las variantes locales (`overrides.json`) de una sede desde su rama dedicada.
- * Si la rama aún no existe en GitHub (404), resuelve sin error conservando el catálogo base.
+ * Descarga las variantes (`overrides.json`) y canciones exclusivas (`local_songs.json`)
+ * de una sede desde su rama dedicada. Si algún archivo aún no existe (404), resuelve sin error.
  */
 export async function syncSedeFromGitHub(
   sedeId: string,
@@ -339,27 +357,49 @@ export async function syncSedeFromGitHub(
   const branch = getSedeBranch(sedeId);
 
   try {
-    const res = await fetchJsonFromGit<unknown[]>(branch, 'overrides.json', forceRefresh);
+    const [overridesRes, localSongsRes] = await Promise.all([
+      fetchJsonFromGit<unknown[]>(branch, 'overrides.json', forceRefresh),
+      fetchJsonFromGit<unknown[]>(branch, 'local_songs.json', forceRefresh)
+    ]);
 
-    if (res.status === 404) {
-      markSedeAsSynced(sedeId);
-      writeStorage(STORAGE_KEYS.lastSync, new Date().toISOString());
-      return { status: 'synced', updatedSongs: 0, updatedOverrides: 0 };
+    let updatedOverrides = 0;
+    if (overridesRes.status !== 404) {
+      if (!overridesRes.data || !Array.isArray(overridesRes.data)) {
+        throw new Error(`El archivo de variantes de ${sedeId} no es válido.`);
+      }
+      const validOverrides = overridesRes.data.filter(isValidOverride).map(ov => ({
+        ...ov,
+        sedeId: ov.sedeId || sedeId
+      }));
+      updatedOverrides = await mergeRemoteRecords(
+        db.overrides,
+        validOverrides,
+        local => local.sedeId === sedeId
+      );
     }
 
-    if (!res.data || !Array.isArray(res.data)) {
-      throw new Error(`El archivo de variantes de ${sedeId} no es válido.`);
+    let updatedSongs = 0;
+    if (localSongsRes.status !== 404) {
+      if (!localSongsRes.data || !Array.isArray(localSongsRes.data)) {
+        throw new Error(`El archivo de canciones locales de ${sedeId} no es válido.`);
+      }
+      const validLocalSongs = localSongsRes.data.filter(isValidBaseSong).map(song => ({
+        ...song,
+        sedeId: song.sedeId || sedeId
+      }));
+      updatedSongs = await mergeRemoteRecords(
+        db.songs,
+        validLocalSongs,
+        local => local.sedeId === sedeId
+      );
     }
-
-    const validOverrides = res.data.filter(isValidOverride);
-    const updatedOverrides = await mergeRemoteRecords(db.overrides, validOverrides);
 
     markSedeAsSynced(sedeId);
     writeStorage(STORAGE_KEYS.lastSync, new Date().toISOString());
 
     return {
       status: 'synced',
-      updatedSongs: 0,
+      updatedSongs,
       updatedOverrides
     };
   } catch (error) {
@@ -373,7 +413,7 @@ export async function syncSedeFromGitHub(
 }
 
 /**
- * Ejecuta la sincronización completa para el perfil activo: catálogo general + variantes de sede.
+ * Ejecuta la sincronización completa para el perfil activo: catálogo general + variantes y cantos de sede.
  */
 export async function syncCatalogAndSede(
   activeSedeId: string,
@@ -391,7 +431,7 @@ export async function syncCatalogAndSede(
   const sedeResult = await syncSedeFromGitHub(activeSedeId, options);
   return {
     status: sedeResult.status === 'error' ? 'error' : 'synced',
-    updatedSongs: generalResult.updatedSongs,
+    updatedSongs: generalResult.updatedSongs + sedeResult.updatedSongs,
     updatedOverrides: sedeResult.updatedOverrides,
     sedes: generalResult.sedes,
     errorMessage: sedeResult.errorMessage

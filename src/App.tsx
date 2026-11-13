@@ -10,10 +10,12 @@ import {
   Music,
   AlertTriangle,
   Church,
-  X
+  X,
+  Lock,
+  Unlock
 } from 'lucide-react';
 import { db, initializeDatabase } from './db';
-import { BaseSong, SedeProfile, SyncStatus } from './types';
+import { AdminSession, BaseSong, SedeProfile, SyncStatus } from './types';
 import { resolveSongForDisplay, isSongVisibleInSede } from './services/songResolver';
 import { decompressSetlist } from './services/urlSharing';
 import { checkAndRequestStoragePersistence } from './services/backupService';
@@ -28,6 +30,14 @@ import {
   syncCatalogAndSede,
   syncSedeFromGitHub
 } from './services/gitSyncService';
+import {
+  canSessionEditSede,
+  createRemoteSede,
+  flushPendingCorrections,
+  flushPendingSyncQueue,
+  getStoredSession,
+  publishOrQueueChange
+} from './services/cloudApiService';
 import { SedeSelector, SEDES_LIST } from './components/SedeSelector';
 import { MusicianView } from './components/MusicianView';
 import { ProjectionView } from './components/ProjectionView';
@@ -38,6 +48,7 @@ import { MobileBottomNav } from './components/MobileBottomNav';
 import { SongEditorModal } from './components/SongEditorModal';
 import { ReaderView } from './components/ReaderView';
 import { BackupModal } from './components/BackupModal';
+import { AdminAuthModal } from './components/AdminAuthModal';
 
 const ACTIVE_SEDE_STORAGE_KEY = 'app_lyrics_active_sede';
 
@@ -65,6 +76,8 @@ export function App() {
   const [editorOriginalTitle, setEditorOriginalTitle] = useState<string | undefined>(undefined);
   const [editorInitialNotes, setEditorInitialNotes] = useState<string | undefined>(undefined);
   const [isBackupModalOpen, setIsBackupModalOpen] = useState<boolean>(false);
+  const [adminSession, setAdminSession] = useState<AdminSession | null>(() => getStoredSession());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [sedesList, setSedesList] = useState<SedeProfile[]>(() => getStoredSedes(SEDES_LIST));
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(() => getLastSyncAt());
@@ -89,6 +102,12 @@ export function App() {
     }
 
     setSyncStatus('syncing');
+    const flushRes = await flushPendingSyncQueue();
+    if (flushRes.authExpired) {
+      setAdminSession(null);
+    }
+    await flushPendingCorrections();
+
     const result = await syncCatalogAndSede(targetSedeId, { force });
     if (result.sedes && result.sedes.length > 0) {
       setSedesList(result.sedes);
@@ -200,6 +219,8 @@ export function App() {
   const songs = useLiveQuery(() => db.songs.toArray()) || [];
   const overrides = useLiveQuery(() => db.overrides.toArray()) || [];
   const setlists = useLiveQuery(() => db.setlists.toArray()) || [];
+  const pendingSyncItems = useLiveQuery(() => db.pendingSync.toArray()) || [];
+  const canEditGeneral = adminSession?.role === 'master';
 
   const currentSedeProfile = sedesList.find(s => s.id === activeSedeId) || {
     name: activeSedeId === 'general' ? 'Catálogo General' : activeSedeId,
@@ -271,7 +292,7 @@ export function App() {
   const openEditorForActiveSong = () => {
     if (!activeBaseSong || !activeDisplaySong) return;
 
-    if (effectiveSedeId === 'general') {
+    if (effectiveSedeId === 'general' && !canEditGeneral) {
       setSedeRequiredPrompt('edit');
       return;
     }
@@ -298,7 +319,7 @@ export function App() {
   };
 
   const openCreateSongEditor = () => {
-    if (activeSedeId === 'general') {
+    if (activeSedeId === 'general' && !canEditGeneral) {
       setSedeRequiredPrompt('create');
       return;
     }
@@ -312,19 +333,36 @@ export function App() {
   const handleRestoreOverride = async (songId: string) => {
     if (!effectiveSedeId || effectiveSedeId === 'general') return;
     await db.overrides.delete(`${songId}_${effectiveSedeId}`);
+    const res = await publishOrQueueChange({
+      action: 'delete_override',
+      targetSedeId: effectiveSedeId,
+      songId
+    });
+    if (res.authExpired) setAdminSession(null);
   };
 
   const handleDeleteSong = async (songId: string) => {
     const existingSong = await db.songs.get(songId);
-    if (existingSong && existingSong.syncSource !== 'local') {
+    const isSedeOwn = Boolean(existingSong?.sedeId && existingSong.sedeId !== 'general');
+    const isAllowed = !existingSong || existingSong.syncSource === 'local' || isSedeOwn || canEditGeneral;
+    if (!isAllowed) {
       return;
     }
 
+    const deleteTargetSedeId = isSedeOwn && existingSong?.sedeId ? existingSong.sedeId : 'general';
     await db.songs.delete(songId);
     const relatedOverrides = overrides.filter(o => o.baseSongId === songId);
     if (relatedOverrides.length > 0) {
       await db.overrides.bulkDelete(relatedOverrides.map(o => o.id));
     }
+
+    const res = await publishOrQueueChange({
+      action: 'delete_song',
+      targetSedeId: deleteTargetSedeId,
+      songId
+    });
+    if (res.authExpired) setAdminSession(null);
+
     setIsExplicitSongSelection(false);
     setSongContextSedeId(null);
     setSelectedItemKey(null);
@@ -405,7 +443,46 @@ export function App() {
               syncStatus={syncStatus}
               lastSyncAt={lastSyncAt}
               onManualSync={() => runSync(activeSedeId, true)}
+              adminSession={adminSession}
+              onRemoteCreateSede={async profile => {
+                await createRemoteSede(profile);
+                await runSync(profile.id, true);
+              }}
             />
+
+            {/* Acceso de Líder / Administrador para publicar en la nube */}
+            <button
+              onClick={() => setIsAuthModalOpen(true)}
+              title={
+                adminSession
+                  ? 'Sesión de administración activa'
+                  : 'Iniciar sesión para sincronizar cambios en la nube'
+              }
+              aria-label="Acceso de administrador"
+              className={`relative flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all shrink-0 ${
+                canSessionEditSede(adminSession, activeSedeId)
+                  ? 'bg-emerald-950/70 text-emerald-300 border-emerald-600/60'
+                  : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500'
+              }`}
+            >
+              {canSessionEditSede(adminSession, activeSedeId) ? (
+                <Unlock className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Lock className="w-3.5 h-3.5 text-slate-400" />
+              )}
+              <span className="hidden md:inline">
+                {adminSession?.role === 'master'
+                  ? 'Admin'
+                  : canSessionEditSede(adminSession, activeSedeId)
+                    ? 'Líder'
+                    : 'Acceder'}
+              </span>
+              {pendingSyncItems.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold">
+                  {pendingSyncItems.length}
+                </span>
+              )}
+            </button>
 
             {/* Conmutador Global Modo Músico / Modo Lector */}
             <button
@@ -690,16 +767,35 @@ export function App() {
           originalSongTitle={editorOriginalTitle}
           initialNotes={editorInitialNotes}
           hasLocalOverride={Boolean(activeDisplaySong?.isLocalOverride && songToEdit)}
+          canEditGeneral={canEditGeneral}
           activeSedeId={effectiveSedeId}
           activeSedeLabel={effectiveSedeProfile?.name}
           isMusicianMode={isMusicianMode}
           existingSongIds={songs.map(s => s.id)}
           onClose={() => setIsEditorOpen(false)}
-          onSave={savedSong => {
+          onSave={async (savedSong, meta) => {
             setSelectedSongId(savedSong.id);
             setIsExplicitSongSelection(true);
             setSelectedItemKey(null);
             setMobileView('detail');
+
+            if (meta?.override && effectiveSedeId !== 'general') {
+              const res = await publishOrQueueChange({
+                action: 'upsert_override',
+                targetSedeId: effectiveSedeId,
+                override: meta.override
+              });
+              if (res.authExpired) setAdminSession(null);
+            } else {
+              const targetSedeId =
+                savedSong.sedeId && savedSong.sedeId !== 'general' ? savedSong.sedeId : 'general';
+              const res = await publishOrQueueChange({
+                action: 'upsert_song',
+                targetSedeId,
+                song: savedSong
+              });
+              if (res.authExpired) setAdminSession(null);
+            }
           }}
           onDeleteSong={handleDeleteSong}
           onRestoreOverride={handleRestoreOverride}
@@ -714,6 +810,26 @@ export function App() {
           onDataRestored={() => {}}
         />
       )}
+
+      {/* Modal de Sesión de Administración */}
+      <AdminAuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        activeSedeId={activeSedeId}
+        sedesList={sedesList}
+        currentSession={adminSession}
+        pendingCount={pendingSyncItems.length}
+        isOnline={isOnline}
+        onSessionChanged={async nextSession => {
+          setAdminSession(nextSession);
+          if (nextSession && navigator.onLine) {
+            await runSync(activeSedeRef.current, true);
+          }
+        }}
+        onFlushPending={async () => {
+          await runSync(activeSedeRef.current, true);
+        }}
+      />
 
       {/* Aviso Guía: El Catálogo General no se edita directamente sin elegir sede */}
       {sedeRequiredPrompt && (
@@ -751,13 +867,24 @@ export function App() {
                 : 'Para agregar canciones locales, selecciona primero el catálogo específico de tu iglesia o sede.'}
             </p>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <button
                 type="button"
                 onClick={() => setSedeRequiredPrompt(null)}
                 className="px-3.5 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 transition-colors"
               >
                 Entendido
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSedeRequiredPrompt(null);
+                  setIsAuthModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+              >
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <span>Admin General</span>
               </button>
               <button
                 type="button"

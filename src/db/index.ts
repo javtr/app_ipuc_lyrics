@@ -1,5 +1,11 @@
 import Dexie, { type Table } from 'dexie';
-import { BaseSong, SedeSongOverride, Setlist, CorrectionSuggestion } from '../types';
+import {
+  BaseSong,
+  SedeSongOverride,
+  Setlist,
+  CorrectionSuggestion,
+  PendingSyncOperation
+} from '../types';
 import { SEED_SONGS, SEED_OVERRIDES } from '../data/seedSongs';
 
 export class LyricsDatabase extends Dexie {
@@ -7,6 +13,7 @@ export class LyricsDatabase extends Dexie {
   overrides!: Table<SedeSongOverride, string>;
   setlists!: Table<Setlist, string>;
   suggestions!: Table<CorrectionSuggestion, string>;
+  pendingSync!: Table<PendingSyncOperation, string>;
 
   constructor() {
     super('AppLyricsDB');
@@ -15,6 +22,13 @@ export class LyricsDatabase extends Dexie {
       overrides: 'id, baseSongId, sedeId, [baseSongId+sedeId]',
       setlists: 'id, name, date, sedeId',
       suggestions: 'id, songId, createdAt'
+    });
+    this.version(2).stores({
+      songs: 'id, title, originalKey, updatedAt',
+      overrides: 'id, baseSongId, sedeId, [baseSongId+sedeId]',
+      setlists: 'id, name, date, sedeId',
+      suggestions: 'id, songId, createdAt',
+      pendingSync: 'id, targetSedeId, createdAt'
     });
   }
 }
