@@ -1,55 +1,88 @@
 [
-    {
-        "sedeId":  "sede-palestina",
-        "customKey":  "A",
-        "customSections":  [
-                               {
-                                   "label":  "Verso 1 (Palestina)",
-                                   "lines":  [
-                                                 "[A]Sublime gracia del [D]Señor[A]",
-                                                 "Que a un [F#m]infeliz sal[E]vó",
-                                                 "Fui [A]ciego mas hoy [D]veo [A]yo",
-                                                 "Per[F#m]dido y Él [E]me ha[A]lló"
-                                             ],
-                                   "id":  "v1",
-                                   "type":  "verse"
-                               },
-                               {
-                                   "label":  "Coro",
-                                   "lines":  [
-                                                 "[A]¡Aleluya! [D]¡Ale[A]luya!",
-                                                 "A [F#m]Cristo daré [E]loor",
-                                                 "[A]Por Su gracia y [D]Su per[A]dón",
-                                                 "Por [F#m]siempre a Él [E]canta[A]ré"
-                                             ],
-                                   "id":  "c1",
-                                   "type":  "chorus"
-                               },
-                               {
-                                   "label":  "Puente Especial Palestina",
-                                   "lines":  [
-                                                 "[D]Cadena rota [A]soy libre al fin",
-                                                 "[F#m]Mi Salvador me [E]rescató",
-                                                 "[D]Y en Su misericor[A]dia eterna",
-                                                 "Su [E]amor me coronó"
-                                             ],
-                                   "id":  "b1",
-                                   "type":  "bridge"
-                               }
-                           ],
-        "id":  "sublime-gracia_sede-palestina",
-        "baseSongId":  "sublime-gracia",
-        "customTitle":  "Sublime Gracia (Versión Acústica Palestina)",
-        "localNotes":  "Entrada instrumental con guitarra acústica y pad suave. Repetir coro 2 veces al final.",
-        "updatedAt":  "2026-11-11T12:00:00.000Z"
-    },
-    {
-        "id":  "la-bondad-de-dios_sede-palestina",
-        "localNotes":  "Subir intensidad desde el puente. Piano guía los 4 primeros compases.",
-        "customTitle":  "La Bondad de Dios (Palestina)",
-        "customKey":  "G",
-        "sedeId":  "sede-palestina",
-        "baseSongId":  "la-bondad-de-dios",
-        "updatedAt":  "2026-11-11T12:00:00.000Z"
-    }
+  {
+    "sedeId": "sede-palestina",
+    "customKey": "A",
+    "customSections": [
+      {
+        "label": "Verso 1 (Palestina)",
+        "lines": [
+          "[A]Sublime gracia del [D]Señor[A]",
+          "Que a un [F#m]infeliz sal[E]vó",
+          "Fui [A]ciego mas hoy [D]veo [A]yo",
+          "Per[F#m]dido y Él [E]me ha[A]lló"
+        ],
+        "id": "v1",
+        "type": "verse"
+      },
+      {
+        "label": "Coro",
+        "lines": [
+          "[A]¡Aleluya! [D]¡Ale[A]luya!",
+          "A [F#m]Cristo daré [E]loor",
+          "[A]Por Su gracia y [D]Su per[A]dón",
+          "Por [F#m]siempre a Él [E]canta[A]ré"
+        ],
+        "id": "c1",
+        "type": "chorus"
+      },
+      {
+        "label": "Puente Especial Palestina",
+        "lines": [
+          "[D]Cadena rota [A]soy libre al fin",
+          "[F#m]Mi Salvador me [E]rescató",
+          "[D]Y en Su misericor[A]dia eterna",
+          "Su [E]amor me coronó"
+        ],
+        "id": "b1",
+        "type": "bridge"
+      }
+    ],
+    "id": "sublime-gracia_sede-palestina",
+    "baseSongId": "sublime-gracia",
+    "customTitle": "Sublime Gracia (Versión Acústica Palestina)",
+    "localNotes": "Entrada instrumental con guitarra acústica y pad suave. Repetir coro 2 veces al final.",
+    "updatedAt": "2026-11-11T12:00:00.000Z"
+  },
+  {
+    "id": "la-bondad-de-dios_sede-palestina",
+    "localNotes": "Subir intensidad desde el puente. Piano guía los 4 primeros compases.",
+    "customTitle": "La Bondad de Dios (Palestina)",
+    "customKey": "G",
+    "sedeId": "sede-palestina",
+    "baseSongId": "la-bondad-de-dios",
+    "updatedAt": "2026-11-11T12:00:00.000Z"
+  },
+  {
+    "id": "cuan-grande-es-el_sede-palestina",
+    "baseSongId": "cuan-grande-es-el",
+    "sedeId": "sede-palestina",
+    "customTitle": "Cuán Grande es Él editada",
+    "customKey": "A",
+    "customSections": [
+      {
+        "id": "sec_1_verse",
+        "type": "verse",
+        "label": "Verso 1",
+        "lines": [
+          "Se[A]ñor mi Dios al contemplar [D]los cielos",
+          "El [A]firmamento y las [E]estrellas [A]mil",
+          "Al oír Tu voz en los po[D]tentes truenos",
+          "Y [A]ver brillar al [E]sol en su ce[A]nit"
+        ]
+      },
+      {
+        "id": "sec_2_chorus",
+        "type": "chorus",
+        "label": "Coro",
+        "lines": [
+          "Mi corazón se [D]llena de emoción",
+          "¡Cuán grande es [A]Él! [F#m]¡Cuán grande es [Bm]Él! [E]",
+          "Mi corazón se [D]llena de emoción",
+          "¡Cuán grande es [A]Él! [E]¡Cuán grande es [A]Él!"
+        ]
+      }
+    ],
+    "updatedAt": "2026-11-13T22:13:20.064Z",
+    "syncSource": "remote"
+  }
 ]
