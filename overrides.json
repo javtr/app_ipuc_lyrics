@@ -72,7 +72,16 @@
         ]
       },
       {
-        "id": "sec_2_chorus",
+        "id": "sec_2_verse",
+        "type": "verse",
+        "label": "Verso 2",
+        "lines": [
+          "Acá va otro verso, no es muy complejo hacerlo",
+          "Esta es otra línea del verso"
+        ]
+      },
+      {
+        "id": "sec_3_chorus",
         "type": "chorus",
         "label": "Coro",
         "lines": [
@@ -83,7 +92,7 @@
         ]
       }
     ],
-    "updatedAt": "2026-11-13T23:26:53.382Z",
+    "updatedAt": "2026-11-14T04:52:53.120Z",
     "syncSource": "remote"
   },
   {
