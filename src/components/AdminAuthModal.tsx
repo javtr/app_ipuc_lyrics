@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Lock, Unlock, X, CloudUpload, LogOut, AlertCircle, ShieldCheck } from 'lucide-react';
+import { Lock, Unlock, X, CloudUpload, LogOut, AlertCircle, ShieldCheck, Clock } from 'lucide-react';
 import { AdminSession, SedeProfile } from '../types';
-import { clearStoredSession, loginAdmin } from '../services/cloudApiService';
+import {
+  AuthRateLimitError,
+  clearStoredSession,
+  getAuthGuardState,
+  loginAdmin
+} from '../services/cloudApiService';
 
 interface AdminAuthModalProps {
   isOpen: boolean;
@@ -35,14 +40,52 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isFlushing, setIsFlushing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [lockedUntil, setLockedUntil] = useState<number>(0);
+  const [remainingAttempts, setRemainingAttempts] = useState<number>(5);
+  const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
 
   useEffect(() => {
     if (isOpen) {
-      setTargetScope(activeSedeId || 'general');
+      const nextScope = activeSedeId || 'general';
+      setTargetScope(nextScope);
       setPassword('');
       setErrorMsg(null);
+      const guard = getAuthGuardState(nextScope);
+      setLockedUntil(guard.lockedUntil);
+      setRemainingAttempts(guard.remainingAttempts);
     }
   }, [isOpen, activeSedeId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const guard = getAuthGuardState(targetScope);
+    setLockedUntil(guard.lockedUntil);
+    setRemainingAttempts(guard.remainingAttempts);
+    setErrorMsg(null);
+  }, [isOpen, targetScope]);
+
+  useEffect(() => {
+    if (!isOpen || lockedUntil <= Date.now()) {
+      setRemainingSeconds(0);
+      return;
+    }
+
+    const updateTimer = () => {
+      const diffMs = lockedUntil - Date.now();
+      if (diffMs <= 0) {
+        setRemainingSeconds(0);
+        setLockedUntil(0);
+        setRemainingAttempts(5);
+        setErrorMsg(null);
+      } else {
+        setRemainingSeconds(Math.ceil(diffMs / 1000));
+      }
+    };
+
+    updateTimer();
+    const timer = window.setInterval(updateTimer, 1000);
+    return () => window.clearInterval(timer);
+  }, [isOpen, lockedUntil]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -60,9 +103,17 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
     return sedesList.find(s => s.id === scopeId)?.name || scopeId;
   };
 
+  const formatCountdown = (totalSeconds: number) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  const isLocked = remainingSeconds > 0;
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!password.trim()) return;
+    if (!password.trim() || isLocked) return;
     if (!isOnline) {
       setErrorMsg('Necesitas conexión a internet para validar tu contraseña en la nube.');
       return;
@@ -76,6 +127,14 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
       setPassword('');
       onClose();
     } catch (err) {
+      if (err instanceof AuthRateLimitError) {
+        setLockedUntil(err.lockedUntil);
+        setRemainingAttempts(0);
+        setPassword('');
+      } else {
+        const guard = getAuthGuardState(targetScope);
+        setRemainingAttempts(guard.remainingAttempts);
+      }
       setErrorMsg(err instanceof Error ? err.message : 'No se pudo iniciar sesión');
     } finally {
       setIsSubmitting(false);
@@ -213,14 +272,43 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
               <input
                 type="password"
                 required
+                disabled={isLocked}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="Ingresa la clave de tu sede o clave maestra"
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500"
+                placeholder={
+                  isLocked ? 'Acceso bloqueado temporalmente' : 'Ingresa la clave de tu sede o clave maestra'
+                }
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
 
-            {errorMsg && (
+            {isLocked ? (
+              <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-700/60 text-xs text-amber-200 flex items-start gap-2.5">
+                <Clock className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+                <div className="space-y-1">
+                  <p className="font-semibold text-amber-100">
+                    Acceso bloqueado temporalmente por seguridad
+                  </p>
+                  <p className="text-[11px] text-amber-300">
+                    Superaste los 5 intentos permitidos. Vuelve a intentarlo en{' '}
+                    <span className="font-mono font-bold text-white">
+                      {formatCountdown(remainingSeconds)}
+                    </span>
+                    .
+                  </p>
+                </div>
+              </div>
+            ) : (
+              remainingAttempts > 0 &&
+              remainingAttempts < 5 && (
+                <div className="px-3 py-2 rounded-xl bg-amber-950/30 border border-amber-800/50 text-[11px] text-amber-200">
+                  Intentos restantes antes del bloqueo temporal:{' '}
+                  <strong className="text-white">{remainingAttempts}</strong>
+                </div>
+              )
+            )}
+
+            {errorMsg && !isLocked && (
               <div className="p-2.5 rounded-xl bg-rose-950/40 border border-rose-800/60 text-xs text-rose-300 flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>{errorMsg}</span>
@@ -237,11 +325,13 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
               </button>
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 transition-colors"
+                disabled={isSubmitting || isLocked}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <Unlock className="w-3.5 h-3.5" />
-                <span>{isSubmitting ? 'Verificando...' : 'Ingresar'}</span>
+                <span>
+                  {isLocked ? `Espera ${formatCountdown(remainingSeconds)}` : isSubmitting ? 'Verificando...' : 'Ingresar'}
+                </span>
               </button>
             </div>
           </form>

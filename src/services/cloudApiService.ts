@@ -10,11 +10,94 @@ import {
 } from '../types';
 
 const ADMIN_SESSION_STORAGE_KEY = 'app_lyrics_admin_session';
+const AUTH_GUARD_STORAGE_KEY = 'app_lyrics_auth_guard';
+const DEFAULT_MAX_AUTH_ATTEMPTS = 5;
+
+export interface AuthLockoutInfo {
+  lockedUntil: number;
+  remainingAttempts: number;
+}
+
+export class AuthRateLimitError extends Error {
+  lockedUntil: number;
+  retryAfterSeconds: number;
+
+  constructor(message: string, lockedUntil: number, retryAfterSeconds: number) {
+    super(message);
+    this.name = 'AuthRateLimitError';
+    this.lockedUntil = lockedUntil;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
 
 export class UnauthorizedApiError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'UnauthorizedApiError';
+  }
+}
+
+function readAuthGuardMap(): Record<string, AuthLockoutInfo> {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(AUTH_GUARD_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, Partial<AuthLockoutInfo>>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const clean: Record<string, AuthLockoutInfo> = {};
+    for (const [key, val] of Object.entries(parsed)) {
+      if (val && typeof val.lockedUntil === 'number' && typeof val.remainingAttempts === 'number') {
+        clean[key] = {
+          lockedUntil: val.lockedUntil,
+          remainingAttempts: val.remainingAttempts
+        };
+      }
+    }
+    return clean;
+  } catch {
+    return {};
+  }
+}
+
+function writeAuthGuardMap(map: Record<string, AuthLockoutInfo>): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(AUTH_GUARD_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // Ignorar error de cuota
+  }
+}
+
+export function getAuthGuardState(sedeId: string, now: number = Date.now()): AuthLockoutInfo {
+  const scope = sedeId || 'general';
+  const map = readAuthGuardMap();
+  const entry = map[scope];
+  if (!entry) {
+    return { lockedUntil: 0, remainingAttempts: DEFAULT_MAX_AUTH_ATTEMPTS };
+  }
+  if (entry.lockedUntil > 0 && entry.lockedUntil <= now) {
+    delete map[scope];
+    writeAuthGuardMap(map);
+    return { lockedUntil: 0, remainingAttempts: DEFAULT_MAX_AUTH_ATTEMPTS };
+  }
+  return entry;
+}
+
+export function clearAuthGuardState(sedeId?: string): void {
+  if (!sedeId) {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(AUTH_GUARD_STORAGE_KEY);
+      } catch {
+        // Ignorar
+      }
+    }
+    return;
+  }
+  const map = readAuthGuardMap();
+  if (map[sedeId]) {
+    delete map[sedeId];
+    writeAuthGuardMap(map);
   }
 }
 
@@ -73,10 +156,23 @@ export function canSessionEditSede(session: AdminSession | null, targetSedeId: s
 }
 
 export async function loginAdmin(sedeId: string, password: string): Promise<AdminSession> {
+  const scope = sedeId || 'general';
+  const now = Date.now();
+  const guard = getAuthGuardState(scope, now);
+  if (guard.lockedUntil > now) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((guard.lockedUntil - now) / 1000));
+    const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+    throw new AuthRateLimitError(
+      `Demasiados intentos fallidos. Por seguridad espera ${minutes} minuto(s) antes de volver a intentar.`,
+      guard.lockedUntil,
+      retryAfterSeconds
+    );
+  }
+
   const res = await fetch('/api/auth', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sedeId, password })
+    body: JSON.stringify({ sedeId: scope, password })
   });
 
   const data = (await res.json()) as {
@@ -86,11 +182,40 @@ export async function loginAdmin(sedeId: string, password: string): Promise<Admi
     role?: 'master' | 'sede';
     sedeId?: string;
     expiresAt?: number;
+    remainingAttempts?: number;
+    lockedUntil?: number;
+    retryAfterSeconds?: number;
   };
 
   if (!res.ok || !data.token || !data.role || !data.sedeId || !data.expiresAt) {
+    const map = readAuthGuardMap();
+    if (res.status === 429 || (typeof data.lockedUntil === 'number' && data.lockedUntil > Date.now())) {
+      const retryAfterSeconds =
+        typeof data.retryAfterSeconds === 'number' && data.retryAfterSeconds > 0
+          ? data.retryAfterSeconds
+          : 15 * 60;
+      const lockedUntil =
+        typeof data.lockedUntil === 'number' && data.lockedUntil > Date.now()
+          ? data.lockedUntil
+          : Date.now() + retryAfterSeconds * 1000;
+      map[scope] = { lockedUntil, remainingAttempts: 0 };
+      writeAuthGuardMap(map);
+      throw new AuthRateLimitError(
+        data.error || 'Demasiados intentos fallidos. Espera antes de volver a intentar.',
+        lockedUntil,
+        retryAfterSeconds
+      );
+    }
+
+    if (typeof data.remainingAttempts === 'number') {
+      map[scope] = { lockedUntil: 0, remainingAttempts: Math.max(0, data.remainingAttempts) };
+      writeAuthGuardMap(map);
+    }
+
     throw new Error(data.error || `Error de autenticación (HTTP ${res.status})`);
   }
+
+  clearAuthGuardState(scope);
 
   const session: AdminSession = {
     token: data.token,

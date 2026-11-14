@@ -6,9 +6,13 @@ import { onRequestPost as commitPost } from '../functions/api/commit';
 import { onRequestPost as suggestPost } from '../functions/api/suggest-correction';
 import { onRequestPost as createSedePost } from '../functions/api/create-sede';
 import { onRequestGet as syncGet } from '../functions/api/sync';
+import { clearRateLimitMemoryStoreForTests } from '../functions/_lib/rateLimit';
 import { Env } from '../functions/_lib/types';
 import {
+  AuthRateLimitError,
   flushPendingSyncQueue,
+  getAuthGuardState,
+  loginAdmin,
   publishOrQueueChange,
   saveStoredSession,
   submitCorrectionSuggestion
@@ -57,6 +61,7 @@ describe('Etapa B: Cloudflare Pages Functions, JWT, Issues y Cola Offline', () =
   };
 
   beforeEach(() => {
+    clearRateLimitMemoryStoreForTests();
     vi.stubGlobal('localStorage', createMemoryStorage());
     vi.restoreAllMocks();
   });
@@ -573,5 +578,115 @@ describe('Etapa B: Cloudflare Pages Functions, JWT, Issues y Cola Offline', () =
     expect(bulkPutSpy).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'canto-fallback', syncSource: 'remote' })
     ]);
+  });
+
+  it('POST /api/auth bloquea con HTTP 429 tras 5 intentos fallidos y reinicia el contador al acertar', async () => {
+    const headers = { 'CF-Connecting-IP': '190.10.20.30' };
+
+    // 4 fallos seguidos => informan remainingAttempts descendente (4, 3, 2, 1)
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      const failRes = await authPost({
+        request: new Request('https://app.pages.dev/api/auth', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ sedeId: 'sede-palestina', password: `bad-${attempt}` })
+        }),
+        env: testEnv
+      });
+      expect(failRes.status).toBe(401);
+      const body = (await failRes.json()) as { remainingAttempts: number };
+      expect(body.remainingAttempts).toBe(5 - attempt);
+    }
+
+    // Si acierta en el 5.º intento antes de agotar el límite => 200 y reinicia contador
+    const okRes = await authPost({
+      request: new Request('https://app.pages.dev/api/auth', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ sedeId: 'sede-palestina', password: 'palestina-2026' })
+      }),
+      env: testEnv
+    });
+    expect(okRes.status).toBe(200);
+
+    // Ahora vuelve a disponer de los 5 intentos; al 5.º fallo consecutivo bloquea con 429 + Retry-After
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      const res = await authPost({
+        request: new Request('https://app.pages.dev/api/auth', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ sedeId: 'sede-palestina', password: `wrong-${attempt}` })
+        }),
+        env: testEnv
+      });
+      expect(res.status).toBe(401);
+    }
+
+    const fifthFail = await authPost({
+      request: new Request('https://app.pages.dev/api/auth', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ sedeId: 'sede-palestina', password: 'wrong-5' })
+      }),
+      env: testEnv
+    });
+    expect(fifthFail.status).toBe(429);
+    expect(Number(fifthFail.headers.get('Retry-After'))).toBeGreaterThan(0);
+    const lockBody = (await fifthFail.json()) as {
+      remainingAttempts: number;
+      lockedUntil: number;
+      retryAfterSeconds: number;
+    };
+    expect(lockBody.remainingAttempts).toBe(0);
+    expect(lockBody.lockedUntil).toBeGreaterThan(Date.now());
+
+    // Incluso con la contraseña correcta durante el bloqueo, sigue denegando en servidor (429)
+    const blockedValidRes = await authPost({
+      request: new Request('https://app.pages.dev/api/auth', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ sedeId: 'sede-palestina', password: 'palestina-2026' })
+      }),
+      env: testEnv
+    });
+    expect(blockedValidRes.status).toBe(429);
+
+    // Otra IP distinta sigue pudiendo ingresar con normalidad
+    const otherIpRes = await authPost({
+      request: new Request('https://app.pages.dev/api/auth', {
+        method: 'POST',
+        headers: { 'CF-Connecting-IP': '190.10.20.99' },
+        body: JSON.stringify({ sedeId: 'sede-palestina', password: 'palestina-2026' })
+      }),
+      env: testEnv
+    });
+    expect(otherIpRes.status).toBe(200);
+  });
+
+  it('loginAdmin guarda bloqueo local y evita peticiones de red mientras dura el cooldown', async () => {
+    const lockedUntil = Date.now() + 120_000;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: 'Demasiados intentos fallidos.',
+          remainingAttempts: 0,
+          lockedUntil,
+          retryAfterSeconds: 120
+        }),
+        { status: 429 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(loginAdmin('sede-palestina', 'fake')).rejects.toBeInstanceOf(AuthRateLimitError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getAuthGuardState('sede-palestina').lockedUntil).toBe(lockedUntil);
+
+    // Segundo intento mientras el bloqueo sigue vigente => lanza AuthRateLimitError sin llamar fetch
+    await expect(loginAdmin('sede-palestina', 'palestina-2026')).rejects.toBeInstanceOf(
+      AuthRateLimitError
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

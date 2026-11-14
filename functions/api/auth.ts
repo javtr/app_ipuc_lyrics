@@ -1,5 +1,11 @@
 import { constantTimeEqual, signJwt } from '../_lib/jwt';
 import { resolveRepoConfig, toSedeBranch } from '../_lib/github';
+import {
+  checkAuthRateLimit,
+  clearAuthFailures,
+  formatLockoutMessage,
+  recordAuthFailure
+} from '../_lib/rateLimit';
 import { errorResponse, jsonResponse } from '../_lib/response';
 import { JwtClaims, PagesContext } from '../_lib/types';
 
@@ -51,7 +57,22 @@ export const onRequestPost = async ({ request, env }: PagesContext): Promise<Res
   const { catalogBranch } = resolveRepoConfig(env);
   const now = Date.now();
 
+  const rateCheck = await checkAuthRateLimit(request, env, sedeId, now);
+  if (!rateCheck.allowed) {
+    return errorResponse(
+      formatLockoutMessage(rateCheck.retryAfterSeconds),
+      429,
+      {
+        remainingAttempts: 0,
+        lockedUntil: rateCheck.lockedUntil,
+        retryAfterSeconds: rateCheck.retryAfterSeconds
+      },
+      { 'Retry-After': String(rateCheck.retryAfterSeconds) }
+    );
+  }
+
   if (env.MASTER_PASSWORD && (await constantTimeEqual(password, env.MASTER_PASSWORD))) {
+    await clearAuthFailures(rateCheck);
     const claims: JwtClaims = {
       role: 'master',
       sedeId: 'general',
@@ -69,20 +90,42 @@ export const onRequestPost = async ({ request, env }: PagesContext): Promise<Res
     });
   }
 
-  if (sedeId === 'general') {
-    return errorResponse('Se requiere la clave de Administrador General para el Catálogo General', 403);
-  }
-
   const sedePasswords = parseSedePasswords(env.SEDE_PASSWORDS_JSON);
   const expectedSedePass = sedePasswords[sedeId];
-  if (!expectedSedePass) {
-    return errorResponse('Esta sede aún no tiene clave configurada en la nube', 403);
+  const isForbiddenScope = sedeId === 'general' || !expectedSedePass;
+  const isValidSedePassword =
+    !isForbiddenScope && (await constantTimeEqual(password, expectedSedePass));
+
+  if (!isValidSedePassword) {
+    const failureState = await recordAuthFailure(rateCheck, now);
+    if (failureState.lockedUntil > now) {
+      return errorResponse(
+        formatLockoutMessage(failureState.retryAfterSeconds),
+        429,
+        {
+          remainingAttempts: 0,
+          lockedUntil: failureState.lockedUntil,
+          retryAfterSeconds: failureState.retryAfterSeconds
+        },
+        { 'Retry-After': String(failureState.retryAfterSeconds) }
+      );
+    }
+
+    const baseMessage =
+      sedeId === 'general'
+        ? 'Se requiere la clave de Administrador General para el Catálogo General'
+        : !expectedSedePass
+          ? 'Esta sede aún no tiene clave configurada en la nube'
+          : 'Contraseña incorrecta para esta sede';
+
+    return errorResponse(
+      `${baseMessage}. Te quedan ${failureState.remainingAttempts} intento(s).`,
+      isForbiddenScope ? 403 : 401,
+      { remainingAttempts: failureState.remainingAttempts }
+    );
   }
 
-  if (!(await constantTimeEqual(password, expectedSedePass))) {
-    return errorResponse('Contraseña incorrecta para esta sede', 401);
-  }
-
+  await clearAuthFailures(rateCheck);
   const claims: JwtClaims = {
     role: 'sede',
     sedeId,

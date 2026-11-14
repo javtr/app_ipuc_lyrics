@@ -1,4 +1,4 @@
-# Plan de Desarrollo — Sincronización Rápida (1–3 s) a Costo $0 (`/api/sync` + Caché Edge Corto)
+# Plan de Desarrollo — Control de Intentos Fallidos de Contraseña (Rate Limiting + Bloqueo Temporal)
 
 > **Estado:** Fase 1 (Discusión y Planificación en Modo Solo Lectura — Esperando aprobación expresa del usuario antes de modificar `functions/`, `src/` o `tests/`).
 
@@ -6,212 +6,236 @@
 
 ## 1. Objetivo Técnico
 
-Reducir la latencia de propagación de cambios entre dispositivos (PC ↔ Celular) desde **~5 minutos** (caché fijo de `raw.githubusercontent.com`) hasta **1–3 segundos**, manteniéndose **100% dentro de la capa gratuita** de Cloudflare Pages (`100,000` invocaciones/día) y GitHub REST API (`5,000` peticiones/hora con `GITHUB_PAT`), sin crear bases de datos ni variables de entorno adicionales:
+Proteger el endpoint de autenticación (`POST /api/auth`) y el formulario de acceso en [`AdminAuthModal`](file:///f:/Desarrollo/app_lyrics/src/components/AdminAuthModal.tsx) contra intentos repetidos de contraseñas falsas por parte de usuarios sin permisos o scripts automatizados, manteniendo **costo $0** y **cero servicios externos nuevos**:
 
-1. **Endpoint proxy de lectura ligera (`GET /api/sync`):**
-   - Leer `catalog.json`, `sedes.json`, `overrides.json` y `local_songs.json` directamente desde GitHub REST API usando `Accept: application/vnd.github.raw+json` (sin decodificación Base64 en el Worker, manteniendo consumo de CPU mínimo dentro del límite gratuito de 10 ms).
-   - Aplicar validación estricta de lista blanca sobre `file` y `branch` para impedir lecturas fuera de los archivos de catálogo/sedes.
-   - Proteger la cuota de GitHub mediante **caché corto de 5 segundos** en el edge de Cloudflare (`caches.default`) para lecturas estándar, y salto explícito (`fresh=1`) cuando el usuario pulsa sincronización manual o cambia de sede (actualizando también el caché para los demás usuarios).
-   - Responder `HTTP 404` con marcador JSON `{ "notFound": true }` cuando un archivo opcional de sede (`overrides.json`, `local_songs.json`) aún no exista en la rama.
-2. **Cliente resiliente con fallback automático a GitHub Raw (`fetchJsonFromGit`):**
-   - Consultar primero `/api/sync?branch=...&file=...` (con `&fresh=1` si `forceRefresh === true`).
-   - Si el endpoint responde HTML (p. ej. fallback SPA en `npm run dev` local sin Wrangler), error de red, error `5xx`, límite `429` o un `404` genérico sin `{ notFound: true }`, hacer **fallback automático y transparente** a `https://raw.githubusercontent.com/...` para garantizar continuidad operativa y compatibilidad total con las pruebas actuales.
-3. **Auto-sincronización al volver a la pestaña/app (`visibilitychange`):**
-   - Cuando un músico o líder desbloquea el celular o regresa a la app abierta, disparar `runSync(activeSedeRef.current, false)` con un *throttle* mínimo de 10 segundos para mostrar cambios recientes sin necesidad de recargar la página completa.
+1. **Límite estricto en servidor (`functions/_lib/rateLimit.ts` + `functions/api/auth.ts`):**
+   - Permitir máximo **5 intentos fallidos** por `(IP + sedeId)` dentro de una ventana de **15 minutos**, y máximo **10 intentos fallidos** globales por `IP` (cubre el caso de probar 5 contraseñas en una sede y saltar a otras sedes).
+   - Al alcanzar el límite, bloquear temporalmente durante **15 minutos (`900 s`)**, respondiendo **`HTTP 429 Too Many Requests`** con cabecera estándar `Retry-After` y JSON estructurado (`remainingAttempts: 0`, `lockedUntil`, `retryAfterSeconds`).
+   - En los intentos fallidos `1..4` (`401` / `403`), devolver `remainingAttempts` y `maxAttempts` para informar al usuario sin revelar nunca qué contraseñas existen ni cuáles sedes tienen clave.
+   - Si el usuario acierta la contraseña antes del bloqueo, limpiar inmediatamente el contador de intentos fallidos de esa cubeta.
+   - Persistir el estado en el edge de Cloudflare mediante `caches.default` (clave con hash **SHA-256** de la IP para no guardar IPs en texto plano) y fallback automático a un `Map` en memoria en entornos sin Cache API (p. ej. pruebas locales).
+2. **Protección y experiencia visual en el cliente (`src/services/cloudApiService.ts` + `src/components/AdminAuthModal.tsx`):**
+   - Guardar en `localStorage` (`app_lyrics_auth_guard`) el estado local de bloqueo y de intentos restantes por sede sincronizado con las respuestas del servidor.
+   - En [`AdminAuthModal`](file:///f:/Desarrollo/app_lyrics/src/components/AdminAuthModal.tsx), mostrar una **cuenta regresiva en vivo (`mm:ss`)**, deshabilitar el campo de contraseña y el botón **`Ingresar`** mientras el bloqueo esté activo (evitando llamadas innecesarias a `/api/auth`), y mostrar claramente cuántos intentos quedan cuando falla una clave.
+   - Al iniciar sesión correctamente, limpiar el contador local de esa sede y del estado bloqueado.
 
 ---
 
 ## 2. Pseudocódigo y Flujo Lógico
 
-### A. Helper de lectura Raw en GitHub (`functions/_lib/github.ts` y `functions/_lib/types.ts`)
+### A. Utilidad de Respuestas HTTP con Metadatos (`functions/_lib/response.ts`)
 
 ```ts
-// En functions/_lib/types.ts
-interface PagesContext {
-  request: Request;
-  env: Env;
-  params?: Record<string, string>;
-  waitUntil?: (promise: Promise<unknown>) => void;
+export function jsonResponse(
+  data: unknown,
+  status: number = 200,
+  extraHeaders?: Record<string, string>
+): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+      ...extraHeaders
+    }
+  });
 }
 
-// En functions/_lib/github.ts
-async function getRawJsonText(
-  env: Env,
-  branch: string,
-  filePath: string
-): Promise<{ status: 200; rawText: string } | { status: 404 }> {
-  const res = await githubFetch(
-    env,
-    `/contents/${encodeRepoPath(filePath)}?ref=${encodeURIComponent(branch)}`,
-    {
-      headers: {
-        Accept: 'application/vnd.github.raw+json'
-      }
-    }
+export function errorResponse(
+  message: string,
+  status: number = 400,
+  extraPayload?: Record<string, unknown>,
+  extraHeaders?: Record<string, string>
+): Response {
+  return jsonResponse({ ok: false, error: message, ...extraPayload }, status, extraHeaders);
+}
+```
+
+### B. Control de Intentos en Servidor (`functions/_lib/rateLimit.ts`)
+
+```ts
+const DEFAULT_MAX_ATTEMPTS_PER_SCOPE = 5;
+const DEFAULT_MAX_ATTEMPTS_PER_IP = 10;
+const DEFAULT_LOCKOUT_SECONDS = 15 * 60; // 900 segundos (15 minutos)
+
+interface RateLimitState {
+  attempts: number;
+  windowExpiresAt: number;
+  lockedUntil: number;
+}
+
+function getClientIp(request: Request): string {
+  return (
+    request.headers.get('CF-Connecting-IP') ||
+    request.headers.get('X-Forwarded-For')?.split(',')[0].trim() ||
+    'unknown'
   );
+}
 
-  if (res.status === 404) {
-    return { status: 404 };
-  }
-  if (!res.ok) {
-    throw new Error(`Error GitHub API (HTTP ${res.status}) al leer ${filePath}`);
+async function hashIdentifier(raw: string, salt: string): Promise<string> {
+  // SHA-256 vía Web Crypto para no almacenar IPs en texto plano
+  digest = await crypto.subtle.digest('SHA-256', encode(`${salt}:${raw}`));
+  return toHex(digest).slice(0, 32);
+}
+
+// Almacén dual: Cloudflare caches.default (en edge) o Map en memoria (en Node/Vitest)
+async function readBucket(key: string, now: number): Promise<RateLimitState | null> { ... }
+async function writeBucket(key: string, state: RateLimitState, now: number): Promise<void> { ... }
+async function clearBucket(key: string): Promise<void> { ... }
+
+export async function checkAuthRateLimit(
+  request: Request,
+  env: Env,
+  sedeId: string,
+  now: number = Date.now()
+): Promise<{
+  allowed: boolean;
+  retryAfterSeconds: number;
+  lockedUntil: number;
+  remainingAttempts: number;
+  scopeKey: string;
+  globalKey: string;
+}> {
+  ipHash = await hashIdentifier(getClientIp(request), env.JWT_SECRET || 'app-lyrics');
+  scopeKey = `auth-scope-${ipHash}-${sedeId}`;
+  globalKey = `auth-ip-${ipHash}`;
+
+  scopeState = await readBucket(scopeKey, now);
+  globalState = await readBucket(globalKey, now);
+
+  // Si cualquiera de las dos cubetas está bloqueada => denegar con tiempo restante máximo
+  maxLockedUntil = Math.max(scopeState?.lockedUntil || 0, globalState?.lockedUntil || 0);
+  if (maxLockedUntil > now) {
+    retryAfterSeconds = Math.max(1, Math.ceil((maxLockedUntil - now) / 1000));
+    return { allowed: false, retryAfterSeconds, lockedUntil: maxLockedUntil, remainingAttempts: 0, scopeKey, globalKey };
   }
 
-  const rawText = await res.text();
-  return { status: 200, rawText };
+  remainingScope = MAX_PER_SCOPE - (scopeState?.attempts || 0);
+  remainingGlobal = MAX_PER_IP - (globalState?.attempts || 0);
+  return {
+    allowed: true,
+    retryAfterSeconds: 0,
+    lockedUntil: 0,
+    remainingAttempts: Math.max(0, Math.min(remainingScope, remainingGlobal)),
+    scopeKey,
+    globalKey
+  };
+}
+
+export async function recordAuthFailure(
+  keys: { scopeKey: string; globalKey: string },
+  now: number = Date.now()
+): Promise<{ lockedUntil: number; retryAfterSeconds: number; remainingAttempts: number }> {
+  // Incrementar attempts en ambos buckets; si alcanza el máximo, fijar lockedUntil = now + LOCKOUT_MS
+  // Persistir con TTL = max(windowExpiresAt, lockedUntil) - now
+  // Devolver estado actualizado para informar remainingAttempts o lock inmediato en el 5.º fallo
+}
+
+export async function clearAuthFailures(keys: { scopeKey: string; globalKey: string }): Promise<void> {
+  await Promise.all([clearBucket(keys.scopeKey), clearBucket(keys.globalKey)]);
 }
 ```
 
-### B. Endpoint Serverless `GET /api/sync` (`functions/api/sync.ts`)
+### C. Integración en `POST /api/auth` (`functions/api/auth.ts`)
 
 ```ts
-const ALLOWED_FILES = new Set([
-  'catalog.json',
-  'sedes.json',
-  'overrides.json',
-  'local_songs.json'
-]);
+export const onRequestPost = async ({ request, env }: PagesContext): Promise<Response> => {
+  // 1. Validar JWT_SECRET y parsear body JSON { sedeId, password }
+  if (!password) return errorResponse('Debes ingresar una contraseña', 400);
 
-function isAllowedBranch(branch: string, catalogBranch: string): boolean {
-  return branch === catalogBranch || /^sede\/[a-z0-9-]+$/.test(branch);
-}
-
-export async function onRequestGet({ request, env, waitUntil }: PagesContext): Promise<Response> {
-  const url = new URL(request.url);
-  const branch = (url.searchParams.get('branch') || '').trim();
-  const file = (url.searchParams.get('file') || '').trim();
-  const fresh = url.searchParams.get('fresh') === '1';
-
-  const { catalogBranch } = resolveRepoConfig(env);
-  if (!ALLOWED_FILES.has(file) || !isAllowedBranch(branch, catalogBranch)) {
-    return errorResponse('Rama o archivo no permitido', 400);
+  // 2. Verificar si la IP / sede ya superó los intentos fallidos
+  const rateCheck = await checkAuthRateLimit(request, env, sedeId, now);
+  if (!rateCheck.allowed) {
+    return errorResponse(
+      formatLockoutMessage(rateCheck.retryAfterSeconds),
+      429,
+      {
+        remainingAttempts: 0,
+        lockedUntil: rateCheck.lockedUntil,
+        retryAfterSeconds: rateCheck.retryAfterSeconds
+      },
+      { 'Retry-After': String(rateCheck.retryAfterSeconds) }
+    );
   }
 
-  const edgeCache =
-    typeof caches !== 'undefined' && 'default' in caches
-      ? (caches as unknown as { default: Cache }).default
-      : null;
-  const cacheKey = `https://sync-cache.internal/${encodeURIComponent(branch)}/${encodeURIComponent(file)}`;
-
-  // 1. Si no es lectura forzada, intentar responder desde caché edge de 5s
-  if (!fresh && edgeCache) {
-    const cached = await edgeCache.match(cacheKey);
-    if (cached) return cached;
+  // 3. Evaluar MASTER_PASSWORD
+  if (env.MASTER_PASSWORD && await constantTimeEqual(password, env.MASTER_PASSWORD)) {
+    await clearAuthFailures(rateCheck);
+    return jsonResponse({ ok: true, token, role: 'master', sedeId: 'general', expiresAt });
   }
 
-  // 2. Consultar GitHub API con Accept raw+json
-  try {
-    const result = await getRawJsonText(env, branch, file);
-
-    const response =
-      result.status === 404
-        ? new Response(JSON.stringify({ notFound: true, status: 404 }), {
-            status: 404,
-            headers: {
-              'Content-Type': 'application/json; charset=utf-8',
-              'Cache-Control': fresh ? 'no-store' : 'public, max-age=5'
-            }
-          })
-        : new Response(result.rawText, {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json; charset=utf-8',
-              'Cache-Control': fresh ? 'no-store' : 'public, max-age=5'
-            }
-          });
-
-    // Actualizar caché corto (5s) en segundo plano para proteger cuota en ráfagas
-    if (edgeCache) {
-      const cacheCopy = new Response(response.clone().body, {
-        status: response.status,
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-          'Cache-Control': 'public, max-age=5'
-        }
-      });
-      const putPromise = edgeCache.put(cacheKey, cacheCopy).catch(() => {});
-      if (waitUntil) waitUntil(putPromise);
-      else await putPromise;
-    }
-
-    return response;
-  } catch (err) {
-    return errorResponse(err instanceof Error ? err.message : 'Error en sincronización rápida', 502);
-  }
-}
-```
-
-### C. Lectura en Cliente con Fallback Seguro (`src/services/gitSyncService.ts`)
-
-```ts
-async function fetchJsonFromGit<T>(
-  branch: string,
-  filePath: string,
-  forceRefresh: boolean
-): Promise<{ status: number; data?: T }> {
-  const proxyParams = new URLSearchParams({ branch, file: filePath });
-  if (forceRefresh) proxyParams.set('fresh', '1');
-  const proxyUrl = `/api/sync?${proxyParams.toString()}`;
-
-  // 1. Intento rápido vía Cloudflare Function (/api/sync, 1-3s)
-  try {
-    const proxyRes = await fetch(proxyUrl, forceRefresh ? { cache: 'no-store' } : undefined);
-    const contentType = proxyRes.headers.get('content-type') || '';
-
-    if (proxyRes.status === 404 && contentType.includes('application/json')) {
-      const payload = (await proxyRes.json()) as { notFound?: boolean };
-      if (payload?.notFound === true) {
-        return { status: 404 };
-      }
-    }
-
-    if (proxyRes.ok && !contentType.includes('text/html')) {
-      const data = (await proxyRes.json()) as T;
-      return { status: proxyRes.status, data };
-    }
-  } catch {
-    // Silencioso: continuar al fallback de GitHub Raw
-  }
-
-  // 2. Fallback seguro a GitHub Raw (Vite dev local o contingencia del proxy)
-  const cacheBust = forceRefresh ? Date.now() : undefined;
-  const rawUrl = getRawFileUrl(branch, filePath, cacheBust);
-  const response = await fetch(rawUrl, forceRefresh ? { cache: 'no-store' } : undefined);
-
-  if (response.status === 404) {
-    return { status: 404 };
-  }
-  if (!response.ok) {
-    throw new Error(`Error HTTP ${response.status} al leer ${filePath} en ${branch}`);
-  }
-
-  const data = (await response.json()) as T;
-  return { status: response.status, data };
-}
-```
-
-### D. Auto-sincronización al volver a la App (`src/App.tsx`)
-
-```ts
-// Ref para evitar peticiones repetidas si el usuario alterna apps rápidamente
-const lastAutoSyncMsRef = useRef<number>(0);
-
-// Dentro de runSync (cuando se ejecuta):
-lastAutoSyncMsRef.current = Date.now();
-
-// Dentro del useEffect principal:
-const handleVisibilityChange = () => {
-  if (document.visibilityState === 'visible' && navigator.onLine) {
-    const elapsed = Date.now() - lastAutoSyncMsRef.current;
-    if (elapsed >= 10_000) {
-      runSync(activeSedeRef.current, false).catch(err =>
-        console.warn('Error al sincronizar al volver:', err)
+  // 4. Evaluar sedeId === 'general' o clave de sede (incluye sede sin clave configurada para evitar enumeración)
+  if (sedeId === 'general' || !expectedSedePass || !(await constantTimeEqual(password, expectedSedePass))) {
+    const failureState = await recordAuthFailure(rateCheck, now);
+    if (failureState.lockedUntil > now) {
+      return errorResponse(
+        formatLockoutMessage(failureState.retryAfterSeconds),
+        429,
+        {
+          remainingAttempts: 0,
+          lockedUntil: failureState.lockedUntil,
+          retryAfterSeconds: failureState.retryAfterSeconds
+        },
+        { 'Retry-After': String(failureState.retryAfterSeconds) }
       );
     }
+
+    const baseMsg =
+      sedeId === 'general'
+        ? 'Se requiere la clave de Administrador General para el Catálogo Oficial'
+        : !expectedSedePass
+          ? 'Esta sede aún no tiene clave configurada en la nube'
+          : 'Contraseña incorrecta para esta sede';
+
+    return errorResponse(
+      `${baseMsg}. Te quedan ${failureState.remainingAttempts} intento(s).`,
+      sedeId === 'general' || !expectedSedePass ? 403 : 401,
+      { remainingAttempts: failureState.remainingAttempts }
+    );
   }
+
+  // 5. Login de sede exitoso => limpiar fallos previos y emitir JWT
+  await clearAuthFailures(rateCheck);
+  return jsonResponse({ ok: true, token, role: 'sede', sedeId, expiresAt });
 };
-document.addEventListener('visibilitychange', handleVisibilityChange);
-// Cleanup: document.removeEventListener('visibilitychange', handleVisibilityChange);
+```
+
+### D. Estado Local y Cuenta Regresiva en Frontend (`cloudApiService.ts` y `AdminAuthModal.tsx`)
+
+```ts
+// En src/services/cloudApiService.ts
+export interface AuthLockoutInfo {
+  lockedUntil: number;
+  remainingAttempts: number;
+}
+
+export class AuthRateLimitError extends Error {
+  lockedUntil: number;
+  retryAfterSeconds: number;
+  constructor(message: string, lockedUntil: number, retryAfterSeconds: number) { ... }
+}
+
+// Almacenado en localStorage bajo 'app_lyrics_auth_guard' por sedeId:
+export function getAuthGuardState(sedeId: string): AuthLockoutInfo { ... }
+export function clearAuthGuardState(sedeId: string): void { ... }
+
+// En loginAdmin(sedeId, password):
+// 1. Antes de llamar a fetch('/api/auth'), comprobar si getAuthGuardState(sedeId).lockedUntil > Date.now()
+//    Si sigue bloqueado, lanzar AuthRateLimitError sin hacer peticiones de red innecesarias.
+// 2. Si /api/auth responde 429 (o error con lockedUntil), guardar lockedUntil en localStorage y lanzar AuthRateLimitError.
+// 3. Si responde 401/403 con remainingAttempts, persistir remainingAttempts en localStorage y lanzar Error con el mensaje del servidor.
+// 4. Si responde 200 ok, llamar clearAuthGuardState(sedeId) y guardar AdminSession.
+```
+
+```tsx
+// En src/components/AdminAuthModal.tsx
+// Al cambiar targetScope o abrir modal, leer getAuthGuardState(targetScope).
+// Si lockedUntil > Date.now():
+//   - Intervalo de 1 segundo que actualiza `remainingSeconds = Math.ceil((lockedUntil - Date.now()) / 1000)`
+//   - Al llegar a 0, limpiar el estado bloqueado y permitir intentar nuevamente
+//   - Mostrar aviso visual con temporizador `mm:ss` ("Acceso bloqueado temporalmente. Intenta en 14:52")
+//   - Deshabilitar <input type="password"> y el botón "Ingresar" mientras remainingSeconds > 0
+// Cuando remainingAttempts < 5 y > 0, mostrar badge discreto: "Intentos restantes: X"
 ```
 
 ---
@@ -220,28 +244,30 @@ document.addEventListener('visibilitychange', handleVisibilityChange);
 
 | Archivo | Elemento | Cambio |
 | :--- | :--- | :--- |
-| `functions/_lib/types.ts` | `PagesContext` | Añadir propiedad opcional `waitUntil` para escritura no bloqueante en Cloudflare Cache API. |
-| `functions/_lib/github.ts` | `getRawJsonText` | Nuevo helper de lectura directa (`Accept: application/vnd.github.raw+json`) reutilizando `githubFetch`. |
-| `functions/api/sync.ts` | `onRequestGet` | Nuevo endpoint público `GET /api/sync` con lista blanca de archivos/ramas, caché edge de 5s y bypass con `fresh=1`. |
-| `src/services/gitSyncService.ts` | `fetchJsonFromGit` | Priorizar `/api/sync` y mantener fallback automático a `raw.githubusercontent.com` ante respuestas HTML, 404 genérico o errores de red. |
-| `src/App.tsx` | `App` (`useEffect` / `runSync`) | Registrar `lastAutoSyncMsRef` y escucha `visibilitychange` con *throttle* de 10s para refrescar al volver a la app. |
-| `tests/etapaB.test.ts` | Suite Etapa B | Añadir pruebas unitarias para `GET /api/sync` (validación de rutas, 404 con `notFound: true`, lectura raw 200) y fallback de `fetchJsonFromGit`. |
+| `functions/_lib/response.ts` | `jsonResponse`, `errorResponse` | Aceptar `extraPayload` y `extraHeaders` opcionales (ej. `Retry-After`, `remainingAttempts`, `lockedUntil`). |
+| `functions/_lib/rateLimit.ts` | `checkAuthRateLimit`, `recordAuthFailure`, `clearAuthFailures`, `clearRateLimitMemoryStoreForTests` | Nuevo módulo de rate limiting por IP + sede usando Web Crypto SHA-256 y almacenamiento `caches.default` / `Map`. |
+| `functions/api/auth.ts` | `onRequestPost` | Integrar validación de bloqueo (`429`), conteo de fallos (`401`/`403` con `remainingAttempts`) y reinicio de contador tras login exitoso. |
+| `src/services/cloudApiService.ts` | `AuthRateLimitError`, `getAuthGuardState`, `clearAuthGuardState`, `loginAdmin` | Persistir estado de bloqueo/intentos en `localStorage`, evitar envíos durante el bloqueo y propagar tiempos de espera. |
+| `src/components/AdminAuthModal.tsx` | `AdminAuthModal` | Mostrar cuenta regresiva en vivo `mm:ss`, indicador de intentos restantes y bloqueo del formulario mientras dure la penalización. |
+| `tests/etapaB.test.ts` | Suite Etapa B | Añadir pruebas para servidor (`429` al 5.º fallo, `Retry-After`, aislamiento por IP/sede, reinicio al acertar) y cliente (`loginAdmin` guard + bloqueo offline local). |
 
 ---
 
 ## 4. Ubicación Exacta de Modificaciones
 
-1. **[`functions/_lib/types.ts`](file:///f:/Desarrollo/app_lyrics/functions/_lib/types.ts#L21-L25):**
-   - En la interfaz `PagesContext` (líneas 21–25), insertar `waitUntil?: (promise: Promise<unknown>) => void;` después de `params?: Record<string, string>;`.
-2. **[`functions/_lib/github.ts`](file:///f:/Desarrollo/app_lyrics/functions/_lib/github.ts#L108-L110):**
-   - Insertar la función exportada `getRawJsonText` inmediatamente después de `getJsonFile` (después de la línea 108 y antes de `putJsonFile` en la línea 113).
-3. **[`functions/api/sync.ts`](file:///f:/Desarrollo/app_lyrics/functions/api/sync.ts):**
-   - Archivo nuevo que exporta `onRequestGet`.
-4. **[`src/services/gitSyncService.ts`](file:///f:/Desarrollo/app_lyrics/src/services/gitSyncService.ts#L145-L167):**
-   - Reemplazar el cuerpo de `fetchJsonFromGit` (líneas 145–167) para intentar primero `/api/sync` y caer limpiamente a `getRawFileUrl`.
-5. **[`src/App.tsx`](file:///f:/Desarrollo/app_lyrics/src/App.tsx#L88-L216):**
-   - Junto a `importTimerRef` (línea 90), añadir `const lastAutoSyncMsRef = useRef<number>(0);`.
-   - Dentro de `runSync` (después de la línea 104), actualizar `lastAutoSyncMsRef.current = Date.now();`.
-   - Dentro del `useEffect` de inicialización (entre las líneas 168 y 215), registrar `document.addEventListener('visibilitychange', handleVisibilityChange)` y removerlo en la función de limpieza.
-6. **[`tests/etapaB.test.ts`](file:///f:/Desarrollo/app_lyrics/tests/etapaB.test.ts#L463-L487):**
-   - Al final del archivo (después de la línea 487), añadir los nuevos casos de prueba para `syncGet` (`/api/sync`) y el fallback de `syncGeneralCatalog` / `syncSedeFromGitHub`.
+1. **[`functions/_lib/response.ts`](file:///f:/Desarrollo/app_lyrics/functions/_lib/response.ts#L1-L19):**
+   - Actualizar `jsonResponse` (líneas 4–12) para aceptar `extraHeaders?: Record<string, string>` y `errorResponse` (líneas 17–19) para aceptar `extraPayload` y `extraHeaders`.
+2. **[`functions/_lib/rateLimit.ts`](file:///f:/Desarrollo/app_lyrics/functions/_lib/rateLimit.ts):**
+   - Archivo nuevo que exporta `checkAuthRateLimit`, `recordAuthFailure`, `clearAuthFailures`, `formatLockoutMessage` y `clearRateLimitMemoryStoreForTests`.
+3. **[`functions/api/auth.ts`](file:///f:/Desarrollo/app_lyrics/functions/api/auth.ts#L1-L102):**
+   - En la parte superior (líneas 1–6), importar las funciones de `../_lib/rateLimit`.
+   - Dentro de `onRequestPost` (después de validar `!password` en la línea 49), invocar `checkAuthRateLimit`; en cada éxito (`lines 54-70` y `lines 86-101`) llamar `clearAuthFailures`; y en cada rechazo (`lines 72-84`) llamar `recordAuthFailure` y responder `429` o `401`/`403` con `remainingAttempts`.
+4. **[`src/services/cloudApiService.ts`](file:///f:/Desarrollo/app_lyrics/src/services/cloudApiService.ts#L12-L103):**
+   - Junto a `UnauthorizedApiError` (después de la línea 19), añadir `AuthRateLimitError`, `AuthLockoutInfo`, `getAuthGuardState` y `clearAuthGuardState`.
+   - Reemplazar `loginAdmin` (líneas 75–103) para consultar el bloqueo local antes del `fetch`, actualizar contadores con la respuesta de `/api/auth` y limpiarlos al autenticar.
+5. **[`src/components/AdminAuthModal.tsx`](file:///f:/Desarrollo/app_lyrics/src/components/AdminAuthModal.tsx#L33-L248):**
+   - En los estados del componente (junto a las líneas 33–55), añadir `lockedUntil`, `remainingAttempts` y `remainingSeconds` + `useEffect` de cuenta regresiva cada 1000 ms.
+   - En `handleLogin` (líneas 63–83) y el formulario JSX (líneas 185–248), deshabilitar input/botón mientras `remainingSeconds > 0`, mostrar banner con tiempo restante `mm:ss` y advertencia de intentos restantes.
+6. **[`tests/etapaB.test.ts`](file:///f:/Desarrollo/app_lyrics/tests/etapaB.test.ts#L59-L577):**
+   - En `beforeEach` (línea 59), invocar `clearRateLimitMemoryStoreForTests()`.
+   - Al final del archivo (después de la línea 576), añadir las pruebas unitarias de bloqueo tras 5 intentos fallidos, reinicio al acertar y guarda en `loginAdmin`.
