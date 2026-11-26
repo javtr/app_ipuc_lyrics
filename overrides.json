@@ -133,7 +133,7 @@
     "id": "adoremos-a-rey_sede-palestina",
     "baseSongId": "adoremos-a-rey",
     "sedeId": "sede-palestina",
-    "customTitle": "Por eso yo le canto",
+    "customTitle": "Por eso yo te canto",
     "customKey": "C",
     "customSections": [
       {
@@ -162,7 +162,7 @@
         ]
       }
     ],
-    "updatedAt": "2026-11-26T22:22:52.885Z",
+    "updatedAt": "2026-11-26T22:25:15.626Z",
     "syncSource": "remote"
   }
 ]
