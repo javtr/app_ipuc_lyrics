@@ -689,4 +689,51 @@ describe('Etapa B: Cloudflare Pages Functions, JWT, Issues y Cola Offline', () =
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('POST /api/auth valida claves sintéticas con símbolos especiales (#, >, =, *) y loginAdmin maneja HTML local limpiamente', async () => {
+    const specialEnv: Env = {
+      ...testEnv,
+      MASTER_PASSWORD: "9X#'>k=2ABcZ>",
+      SEDE_PASSWORDS_JSON: JSON.stringify({
+        'sede-central': 'centroTest99*',
+        'sede-palestina': '*palTest99#'
+      })
+    };
+
+    const masterRes = await authPost({
+      request: new Request('https://app.pages.dev/api/auth', {
+        method: 'POST',
+        headers: { 'CF-Connecting-IP': '190.10.20.77' },
+        body: JSON.stringify({ sedeId: 'general', password: "9X#'>k=2ABcZ>" })
+      }),
+      env: specialEnv
+    });
+    expect(masterRes.status).toBe(200);
+    expect(((await masterRes.json()) as { role: string }).role).toBe('master');
+
+    const palRes = await authPost({
+      request: new Request('https://app.pages.dev/api/auth', {
+        method: 'POST',
+        headers: { 'CF-Connecting-IP': '190.10.20.78' },
+        body: JSON.stringify({ sedeId: 'sede-palestina', password: '*palTest99#' })
+      }),
+      env: specialEnv
+    });
+    expect(palRes.status).toBe(200);
+    expect(((await palRes.json()) as { sedeId: string }).sedeId).toBe('sede-palestina');
+
+    // Respuesta HTML (ej. Vite dev local sin Functions) => mensaje legible en lugar de error JSON crudo
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('<!doctype html><html></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' }
+        })
+      )
+    );
+    await expect(loginAdmin('sede-palestina', '*palTest99#')).rejects.toThrow(
+      'El inicio de sesión no está disponible en modo local'
+    );
+  });
 });

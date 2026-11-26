@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Church, Wifi, WifiOff, Plus, Check, X, RefreshCw } from 'lucide-react';
+import { Church, Plus, Check, X, RefreshCw, Lock, Unlock } from 'lucide-react';
 import { AdminSession, SedeProfile, SyncStatus } from '../types';
 import { normalizeSedeSlug, saveCustomSede } from '../services/gitSyncService';
 
@@ -16,6 +16,9 @@ interface SedeSelectorProps {
   onManualSync?: () => void;
   adminSession?: AdminSession | null;
   onRemoteCreateSede?: (profile: SedeProfile) => Promise<void>;
+  hideTriggerButton?: boolean;
+  onOpenAuthModal?: () => void;
+  pendingSyncCount?: number;
 }
 
 export const SEDES_LIST: SedeProfile[] = [
@@ -42,7 +45,10 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
   lastSyncAt,
   onManualSync,
   adminSession,
-  onRemoteCreateSede
+  onRemoteCreateSede,
+  hideTriggerButton = false,
+  onOpenAuthModal,
+  pendingSyncCount = 0
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false);
   const [sedes, setSedes] = useState<SedeProfile[]>(sedesList && sedesList.length > 0 ? sedesList : SEDES_LIST);
@@ -74,8 +80,11 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
 
   const currentSede = sedes.find(s => s.id === activeSedeId) || sedes[0];
 
+  const isMasterAdmin = adminSession?.role === 'master';
+
   const handleCreateSede = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isMasterAdmin) return;
     const cleanName = newSedeName.trim();
     if (!cleanName || isCreatingRemote) return;
 
@@ -110,30 +119,19 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
   };
 
   return (
-    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-      {/* Indicador de conexión */}
-      <div
-        title={isOnline ? 'En línea' : 'Modo Offline (IndexedDB activo)'}
-        className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-medium border shrink-0 ${
-          isOnline
-            ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800'
-            : 'bg-amber-950/60 text-amber-400 border-amber-800'
-        }`}
-      >
-        {isOnline ? <Wifi className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> : <WifiOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />}
-        <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline'}</span>
-      </div>
-
-      {/* Botón selector de sede compacto */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-slate-500 text-slate-200 text-xs font-medium transition-colors shrink-0"
-      >
-        <Church className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400 shrink-0" />
-        <span className="max-w-[90px] sm:max-w-[160px] truncate">
-          {currentSede.shortName || currentSede.name.replace('Catálogo ', '')}
-        </span>
-      </button>
+    <>
+      {/* Botón selector de sede compacto (oculto cuando se usa el disparador de barra inferior/lateral) */}
+      {!hideTriggerButton && (
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 hover:border-slate-500 text-slate-200 text-xs font-medium transition-colors shrink-0"
+        >
+          <Church className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400 shrink-0" />
+          <span className="max-w-[90px] sm:max-w-[160px] truncate">
+            {currentSede.shortName || currentSede.name.replace('Catálogo ', '')}
+          </span>
+        </button>
+      )}
 
       {/* Modal / Bottom Sheet renderizado fuera del header con React Portal */}
       {isOpen && typeof document !== 'undefined' && createPortal(
@@ -217,16 +215,51 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
                 </div>
               )}
 
-              <button
-                onClick={() => {
-                  setIsOpen(false);
-                  setShowAddModal(true);
-                }}
-                className="w-full flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition-colors"
-              >
-                <Plus className="w-4 h-4 text-emerald-400" />
-                <span>Registrar nueva Sede</span>
-              </button>
+              {onOpenAuthModal && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOpen(false);
+                    onOpenAuthModal();
+                  }}
+                  className={`w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-semibold border transition-colors ${
+                    adminSession
+                      ? 'bg-emerald-950/60 hover:bg-emerald-950/80 text-emerald-300 border-emerald-700/60'
+                      : 'bg-slate-900 hover:bg-slate-800 text-slate-200 border-slate-700'
+                  }`}
+                >
+                  {adminSession ? (
+                    <Unlock className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <Lock className="w-4 h-4 text-slate-400 shrink-0" />
+                  )}
+                  <span className="truncate">
+                    {adminSession?.role === 'master'
+                      ? 'Sesión: Administrador General'
+                      : adminSession?.role === 'sede'
+                        ? `Sesión: Líder (${sedes.find(s => s.id === adminSession.sedeId)?.shortName || adminSession.sedeId})`
+                        : 'Iniciar sesión (Líder / Admin)'}
+                  </span>
+                  {pendingSyncCount > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold shrink-0">
+                      {pendingSyncCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {isMasterAdmin && (
+                <button
+                  onClick={() => {
+                    setIsOpen(false);
+                    setShowAddModal(true);
+                  }}
+                  className="w-full flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition-colors"
+                >
+                  <Plus className="w-4 h-4 text-emerald-400" />
+                  <span>Registrar nueva Sede</span>
+                </button>
+              )}
             </div>
           </div>
         </div>,
@@ -296,6 +329,6 @@ export const SedeSelector: React.FC<SedeSelectorProps> = ({
         </div>,
         document.body
       )}
-    </div>
+    </>
   );
 };

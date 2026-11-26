@@ -175,7 +175,14 @@ export async function loginAdmin(sedeId: string, password: string): Promise<Admi
     body: JSON.stringify({ sedeId: scope, password })
   });
 
-  const data = (await res.json()) as {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('text/html')) {
+    throw new Error(
+      'El inicio de sesión no está disponible en modo local; abre la URL publicada de IPUC Lyrics.'
+    );
+  }
+
+  let data: {
     ok?: boolean;
     error?: string;
     token?: string;
@@ -186,6 +193,11 @@ export async function loginAdmin(sedeId: string, password: string): Promise<Admi
     lockedUntil?: number;
     retryAfterSeconds?: number;
   };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    throw new Error(`El servidor de acceso devolvió una respuesta no válida (HTTP ${res.status}).`);
+  }
 
   if (!res.ok || !data.token || !data.role || !data.sedeId || !data.expiresAt) {
     const map = readAuthGuardMap();

@@ -75,7 +75,7 @@ export async function importBackupFromJson(jsonString: string): Promise<{
   const payload = parsed as BackupPayload;
 
   if (!payload || payload.app !== 'AppLyrics' || !payload.data || typeof payload.data !== 'object') {
-    throw new Error('El archivo no es una copia de seguridad válida de App Lyrics.');
+    throw new Error('El archivo no es una copia de seguridad válida de IPUC Lyrics.');
   }
 
   const { songs = [], overrides = [], setlists = [] } = payload.data;

@@ -34,7 +34,9 @@ import { ProjectionView } from '../src/components/ProjectionView';
 import { SetlistManager } from '../src/components/SetlistManager';
 import { CorrectionModal } from '../src/components/CorrectionModal';
 import { MobileBottomNav } from '../src/components/MobileBottomNav';
+import { SedeSelector } from '../src/components/SedeSelector';
 import { SongEditorModal } from '../src/components/SongEditorModal';
+import { canSessionEditSede } from '../src/services/cloudApiService';
 import { BaseSong, DisplaySong, SedeProfile, SedeSongOverride, Setlist, SongSection } from '../src/types';
 
 vi.mock('../src/hooks/useWakeLock', () => ({
@@ -555,5 +557,78 @@ describe('Estabilización y Regresión: Validación + Nuevos Hallazgos + Correcc
       })
     );
     expect(deleteOverrideSpy).toHaveBeenCalledWith('prueba-antigua_sede-palestina');
+  });
+
+  it('[UX5] oculta indicador Online/Offline, oculta trigger superior de sede y oculta editar/crear sin sesión conservando repertorios', () => {
+    // 1. Sin conexión visible ni botón superior cuando hideTriggerButton = true
+    const hiddenSelectorHtml = renderToStaticMarkup(
+      React.createElement(SedeSelector, {
+        activeSedeId: 'sede-palestina',
+        onSelectSede: vi.fn(),
+        isOnline: true,
+        hideTriggerButton: true,
+        adminSession: null
+      })
+    );
+    expect(hiddenSelectorHtml).toBe('');
+    expect(hiddenSelectorHtml).not.toContain('Online');
+    expect(hiddenSelectorHtml).not.toContain('Offline');
+
+    const visibleSelectorHtml = renderToStaticMarkup(
+      React.createElement(SedeSelector, {
+        activeSedeId: 'sede-palestina',
+        onSelectSede: vi.fn(),
+        isOnline: false,
+        hideTriggerButton: false,
+        adminSession: null
+      })
+    );
+    expect(visibleSelectorHtml).not.toContain('Online');
+    expect(visibleSelectorHtml).not.toContain('Offline');
+    expect(visibleSelectorHtml).not.toContain('Registrar nueva Sede');
+
+    // 2. Sin sesión autorizada, ReaderView y MusicianView no muestran botones de edición
+    expect(canSessionEditSede(null, 'sede-palestina')).toBe(false);
+    expect(canSessionEditSede(null, 'general')).toBe(false);
+
+    const displaySong: DisplaySong = {
+      id: baseSong.id,
+      title: baseSong.title,
+      key: baseSong.originalKey,
+      sections: baseSong.sections,
+      isLocalOverride: false
+    };
+
+    const readerNoAuth = renderToStaticMarkup(
+      React.createElement(ReaderView, {
+        song: displaySong,
+        onEnterProjection: vi.fn(),
+        onEditSong: undefined
+      })
+    );
+    expect(readerNoAuth).not.toContain('aria-label="Editar letra de la canción"');
+
+    const musicianNoAuth = renderToStaticMarkup(
+      React.createElement(MusicianView, {
+        song: displaySong,
+        onEnterProjection: vi.fn(),
+        onEditFullSong: undefined
+      })
+    );
+    expect(musicianNoAuth).not.toContain('aria-label="Editar canción"');
+
+    // 3. Repertorios locales permanecen disponibles sin sesión
+    const setlistHtml = renderToStaticMarkup(
+      React.createElement(SetlistManager, {
+        songs: [baseSong],
+        activeSedeId: 'sede-palestina',
+        savedSetlists: [],
+        isMusicianMode: false,
+        onSelectSong: vi.fn(),
+        onSetlistsUpdated: vi.fn()
+      })
+    );
+    expect(setlistHtml).toContain('Repertorios');
+    expect(setlistHtml).toContain('Nuevo');
   });
 });

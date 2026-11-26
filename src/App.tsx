@@ -9,10 +9,7 @@ import {
   Plus,
   Music,
   AlertTriangle,
-  Church,
-  X,
-  Lock,
-  Unlock
+  Church
 } from 'lucide-react';
 import { db, initializeDatabase } from './db';
 import { AdminSession, BaseSong, SedeProfile, SyncStatus } from './types';
@@ -70,7 +67,6 @@ export function App() {
   const [correctionSong, setCorrectionSong] = useState<BaseSong | null>(null);
   const [importNotification, setImportNotification] = useState<string | null>(null);
   const [isSedeSelectorOpen, setIsSedeSelectorOpen] = useState<boolean>(false);
-  const [sedeRequiredPrompt, setSedeRequiredPrompt] = useState<'edit' | 'create' | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState<boolean>(false);
   const [songToEdit, setSongToEdit] = useState<BaseSong | null>(null);
   const [editorOriginalTitle, setEditorOriginalTitle] = useState<string | undefined>(undefined);
@@ -256,6 +252,8 @@ export function App() {
 
   // Resolución segura sin sustituciones silenciosas cuando una canción de repertorio falta offline
   const effectiveSedeId = songContextSedeId || activeSedeId;
+  const canCreateInActiveSede = canSessionEditSede(adminSession, activeSedeId);
+  const canEditDisplayedSong = canSessionEditSede(adminSession, effectiveSedeId);
   const effectiveSedeProfile = sedesList.find(s => s.id === effectiveSedeId);
   const effectiveSongs = songs.filter(song => isSongVisibleInSede(song, effectiveSedeId));
   const foundSelectedSong = effectiveSongs.find(s => s.id === selectedSongId);
@@ -305,11 +303,7 @@ export function App() {
 
   const openEditorForActiveSong = () => {
     if (!activeBaseSong || !activeDisplaySong) return;
-
-    if (effectiveSedeId === 'general' && !canEditGeneral) {
-      setSedeRequiredPrompt('edit');
-      return;
-    }
+    if (!canSessionEditSede(adminSession, effectiveSedeId)) return;
 
     const editableSong: BaseSong = {
       id: activeBaseSong.id,
@@ -333,10 +327,7 @@ export function App() {
   };
 
   const openCreateSongEditor = () => {
-    if (activeSedeId === 'general' && !canEditGeneral) {
-      setSedeRequiredPrompt('create');
-      return;
-    }
+    if (!canSessionEditSede(adminSession, activeSedeId)) return;
 
     setSongToEdit(null);
     setEditorOriginalTitle(undefined);
@@ -405,7 +396,7 @@ export function App() {
             </div>
             <div>
               <span className="font-extrabold text-sm sm:text-lg text-white tracking-tight flex items-center gap-1.5">
-                App Lyrics
+                IPUC Lyrics
               </span>
               <span className="hidden sm:block text-[10px] text-slate-400 font-medium">
                 Alabanza & Medios Audiovisuales
@@ -446,7 +437,7 @@ export function App() {
               </button>
             </nav>
 
-            {/* Selector de Sede */}
+            {/* Selector de Sede (disparado desde barra inferior móvil o panel lateral PC) */}
             <SedeSelector
               activeSedeId={activeSedeId}
               onSelectSede={handleSelectSede}
@@ -458,45 +449,14 @@ export function App() {
               lastSyncAt={lastSyncAt}
               onManualSync={() => runSync(activeSedeId, true)}
               adminSession={adminSession}
+              hideTriggerButton
+              onOpenAuthModal={() => setIsAuthModalOpen(true)}
+              pendingSyncCount={pendingSyncItems.length}
               onRemoteCreateSede={async profile => {
                 await createRemoteSede(profile);
                 await runSync(profile.id, true);
               }}
             />
-
-            {/* Acceso de Líder / Administrador para publicar en la nube */}
-            <button
-              onClick={() => setIsAuthModalOpen(true)}
-              title={
-                adminSession
-                  ? 'Sesión de administración activa'
-                  : 'Iniciar sesión para sincronizar cambios en la nube'
-              }
-              aria-label="Acceso de administrador"
-              className={`relative flex items-center gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all shrink-0 ${
-                canSessionEditSede(adminSession, activeSedeId)
-                  ? 'bg-emerald-950/70 text-emerald-300 border-emerald-600/60'
-                  : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500'
-              }`}
-            >
-              {canSessionEditSede(adminSession, activeSedeId) ? (
-                <Unlock className="w-3.5 h-3.5 text-emerald-400" />
-              ) : (
-                <Lock className="w-3.5 h-3.5 text-slate-400" />
-              )}
-              <span className="hidden md:inline">
-                {adminSession?.role === 'master'
-                  ? 'Admin'
-                  : canSessionEditSede(adminSession, activeSedeId)
-                    ? 'Líder'
-                    : 'Acceder'}
-              </span>
-              {pendingSyncItems.length > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 text-[10px] font-bold">
-                  {pendingSyncItems.length}
-                </span>
-              )}
-            </button>
 
             {/* Conmutador Global Modo Músico / Modo Lector */}
             <button
@@ -528,7 +488,7 @@ export function App() {
             <div className={`space-y-3 sm:space-y-4 lg:col-span-4 ${
               mobileView === 'detail' ? 'hidden lg:block' : 'block'
             }`}>
-              {/* Barra de Búsqueda y Botón Nueva Canción */}
+              {/* Barra de Búsqueda y Botón Nueva Canción (solo con sesión autorizada) */}
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                   <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -540,14 +500,16 @@ export function App() {
                     className="w-full pl-10 pr-4 py-2 sm:py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
                   />
                 </div>
-                <button
-                  onClick={openCreateSongEditor}
-                  title="Crear nueva canción"
-                  className="flex items-center gap-1 px-3 py-2 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shrink-0 shadow-sm transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span className="hidden sm:inline">Nueva</span>
-                </button>
+                {canCreateInActiveSede && (
+                  <button
+                    onClick={openCreateSongEditor}
+                    title="Crear nueva canción"
+                    className="flex items-center gap-1 px-3 py-2 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shrink-0 shadow-sm transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span className="hidden sm:inline">Nueva</span>
+                  </button>
+                )}
               </div>
 
               {/* Lista de Canciones */}
@@ -617,14 +579,24 @@ export function App() {
                 )}
               </div>
 
-              {/* Tarjeta Informativa de la Arquitectura */}
-              <div className="p-3 sm:p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 text-xs text-slate-400 space-y-1 hidden sm:block">
-                <div className="flex items-center gap-1.5 font-semibold text-slate-300">
-                  <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Arquitectura de Variantes Activa</span>
+              {/* Panel Lateral de Sede y Sincronización para Escritorio (móvil usa la barra inferior) */}
+              <div className="p-3 sm:p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 text-xs text-slate-400 space-y-2.5 hidden lg:block">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 font-semibold text-slate-300">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Congregación Activa</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsSedeSelectorOpen(true)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-emerald-300 transition-colors"
+                  >
+                    <Church className="w-3 h-3" />
+                    <span>Cambiar / Sincronizar</span>
+                  </button>
                 </div>
                 <p className="text-[11px] leading-relaxed text-slate-500">
-                  Sede actual: <strong className="text-emerald-400">{currentSedeProfile.name}</strong>. Las personalizaciones en el atril se guardan localmente para tu sede sin modificar el catálogo general.
+                  Sede actual: <strong className="text-emerald-400">{currentSedeProfile.name}</strong>.
                 </p>
               </div>
             </div>
@@ -684,7 +656,7 @@ export function App() {
                       setSetlistNavContext(null);
                       setMobileView('list');
                     }}
-                    onEditFullSong={openEditorForActiveSong}
+                    onEditFullSong={canEditDisplayedSong ? openEditorForActiveSong : undefined}
                     onReportCorrection={activeBaseSong ? () => setCorrectionSong(activeBaseSong) : undefined}
                   />
                 ) : (
@@ -696,7 +668,7 @@ export function App() {
                       setSetlistNavContext(null);
                       setMobileView('list');
                     }}
-                    onEditSong={openEditorForActiveSong}
+                    onEditSong={canEditDisplayedSong ? openEditorForActiveSong : undefined}
                     onReportCorrection={activeBaseSong ? () => setCorrectionSong(activeBaseSong) : undefined}
                   />
                 )
@@ -844,77 +816,6 @@ export function App() {
           await runSync(activeSedeRef.current, true);
         }}
       />
-
-      {/* Aviso Guía: El Catálogo General no se edita directamente sin elegir sede */}
-      {sedeRequiredPrompt && (
-        <div
-          onClick={() => setSedeRequiredPrompt(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200"
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl p-5 sm:p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-amber-950/60 border border-amber-700/60 text-amber-400">
-                  <Church className="w-5 h-5" />
-                </div>
-                <h3 className="text-base font-bold text-white">
-                  Selecciona una iglesia para continuar
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSedeRequiredPrompt(null)}
-                aria-label="Cerrar aviso"
-                className="p-1 rounded-lg text-slate-400 hover:text-white transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              Las canciones del <strong className="text-white">Catálogo General</strong> son de solo lectura.{' '}
-              {sedeRequiredPrompt === 'edit'
-                ? 'Para editar letras, cambiar tonos o adaptar una canción, selecciona primero el catálogo específico de tu iglesia o sede.'
-                : 'Para agregar canciones locales, selecciona primero el catálogo específico de tu iglesia o sede.'}
-            </p>
-
-            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-slate-800">
-              <button
-                type="button"
-                onClick={() => setSedeRequiredPrompt(null)}
-                className="px-3.5 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 transition-colors"
-              >
-                Entendido
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSedeRequiredPrompt(null);
-                  setIsAuthModalOpen(true);
-                }}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-              >
-                <Lock className="w-3.5 h-3.5 text-amber-400" />
-                <span>Admin General</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSedeRequiredPrompt(null);
-                  setIsSedeSelectorOpen(true);
-                }}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-colors"
-              >
-                <Church className="w-4 h-4" />
-                <span>Elegir Iglesia / Sede</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

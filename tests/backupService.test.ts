@@ -73,7 +73,7 @@ describe('backupService', () => {
     });
 
     await expect(importBackupFromJson(wrongAppJson)).rejects.toThrow(
-      'El archivo no es una copia de seguridad válida de App Lyrics.'
+      'El archivo no es una copia de seguridad válida de IPUC Lyrics.'
     );
   });
 });
