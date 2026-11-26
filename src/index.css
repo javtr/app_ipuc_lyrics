@@ -34,8 +34,21 @@
   scrollbar-width: none;
 }
 
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Evitar zoom automático en iOS Safari cuando campos tienen fuente menor a 16px */
+@media (max-width: 639px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
 }
 
 @keyframes appFadeIn {

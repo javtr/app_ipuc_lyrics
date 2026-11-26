@@ -25,6 +25,7 @@ import {
 import { resolveSongForDisplay, isSongVisibleInSede } from '../services/songResolver';
 import { filterAndSortSongsByTitle } from '../services/songEditorHelper';
 import { db } from '../db';
+import { ConfirmDialogModal } from './ConfirmDialogModal';
 
 export interface SetlistSelectionContext {
   setlistId: string;
@@ -88,6 +89,8 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
     initialSelectableSongs[0]?.originalKey || 'G'
   );
   const [songSearchQuery, setSongSearchQuery] = useState('');
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [isDeletingSetlist, setIsDeletingSetlist] = useState(false);
 
   const getSedeDisplayName = (sedeId: string) => {
     if (!sedeId || sedeId === 'general') return 'Catálogo General';
@@ -173,13 +176,22 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
     onSetlistsUpdated();
   };
 
-  const handleDeleteSetlist = async () => {
+  const handleDeleteSetlist = () => {
     if (!currentSetlist) return;
-    if (!confirm(`¿Eliminar el repertorio "${currentSetlist.name}"?`)) return;
+    setConfirmDeleteOpen(true);
+  };
 
-    await db.setlists.delete(currentSetlist.id);
-    setActiveSetlistId(null);
-    onSetlistsUpdated();
+  const confirmDeleteSetlist = async () => {
+    if (!currentSetlist || isDeletingSetlist) return;
+    setIsDeletingSetlist(true);
+    try {
+      await db.setlists.delete(currentSetlist.id);
+      setActiveSetlistId(null);
+      setConfirmDeleteOpen(false);
+      onSetlistsUpdated();
+    } finally {
+      setIsDeletingSetlist(false);
+    }
   };
 
   const handleAddSongToSetlist = async (explicitSongId?: string, explicitKey?: string) => {
@@ -641,6 +653,17 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
           </div>
         </div>
       )}
+
+      <ConfirmDialogModal
+        isOpen={confirmDeleteOpen && Boolean(currentSetlist)}
+        title="Eliminar repertorio"
+        message={`¿Eliminar el repertorio "${currentSetlist?.name || ''}" de este dispositivo?`}
+        confirmLabel="Eliminar"
+        variant="danger"
+        isProcessing={isDeletingSetlist}
+        onCancel={() => setConfirmDeleteOpen(false)}
+        onConfirm={confirmDeleteSetlist}
+      />
     </div>
   );
 };

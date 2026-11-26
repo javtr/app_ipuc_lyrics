@@ -112,10 +112,15 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     const textarea = document.createElement('textarea');
     textarea.value = text;
     textarea.setAttribute('readonly', '');
+    textarea.contentEditable = 'true';
     textarea.style.position = 'fixed';
+    textarea.style.top = '0';
+    textarea.style.left = '0';
+    textarea.style.fontSize = '16px';
     textarea.style.opacity = '0';
     document.body.appendChild(textarea);
     textarea.select();
+    textarea.setSelectionRange?.(0, text.length);
     try {
       return document.execCommand('copy');
     } catch {

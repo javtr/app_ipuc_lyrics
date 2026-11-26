@@ -41,6 +41,7 @@ import { ProjectionView } from '../src/components/ProjectionView';
 import { SetlistManager } from '../src/components/SetlistManager';
 import { CorrectionModal } from '../src/components/CorrectionModal';
 import { MobileBottomNav } from '../src/components/MobileBottomNav';
+import { ConfirmDialogModal } from '../src/components/ConfirmDialogModal';
 import { SedeSelector } from '../src/components/SedeSelector';
 import { SongEditorModal } from '../src/components/SongEditorModal';
 import { canSessionEditSede } from '../src/services/cloudApiService';
@@ -748,5 +749,39 @@ describe('Estabilización y Regresión: Validación + Nuevos Hallazgos + Correcc
     // Página donde empieza la letra 'C' (índice 40 => página 2)
     const firstCIndex = indexed.findIndex(item => item.letter === 'C');
     expect(Math.floor(firstCIndex / CATALOG_PAGE_SIZE) + 1).toBe(2);
+  });
+
+  it('[UX8-iOS] ConfirmDialogModal renderiza diálogos seguros sin confirm/alert y ProjectionView soporta Safari iOS sin Fullscreen API', () => {
+    const confirmHtml = renderToStaticMarkup(
+      React.createElement(ConfirmDialogModal, {
+        isOpen: true,
+        title: 'Eliminar repertorio',
+        message: '¿Eliminar "Culto Domingo" de este dispositivo?',
+        confirmLabel: 'Eliminar',
+        variant: 'danger',
+        onCancel: vi.fn(),
+        onConfirm: vi.fn()
+      })
+    );
+    expect(confirmHtml).toContain('role="dialog"');
+    expect(confirmHtml).toContain('Eliminar repertorio');
+    expect(confirmHtml).toContain('Cancelar');
+    expect(confirmHtml).toContain('Eliminar');
+
+    // ProjectionView en entorno iOS/SSR donde document.documentElement.requestFullscreen no existe
+    const projectionHtml = renderToStaticMarkup(
+      React.createElement(ProjectionView, {
+        song: {
+          id: baseSong.id,
+          title: baseSong.title,
+          key: baseSong.originalKey,
+          sections: baseSong.sections,
+          isLocalOverride: false
+        },
+        onClose: vi.fn()
+      })
+    );
+    expect(projectionHtml).toContain('h-[100dvh]');
+    expect(projectionHtml).not.toContain('title="Pantalla Completa"');
   });
 });

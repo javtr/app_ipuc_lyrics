@@ -9,7 +9,8 @@ import {
   Trash2,
   RotateCcw,
   Minus,
-  Plus
+  Plus,
+  AlertCircle
 } from 'lucide-react';
 import { BaseSong, SedeSongOverride, SongSection } from '../types';
 import { serializeSectionsToText, parseTextToSections } from '../services/chordSerializer';
@@ -27,6 +28,7 @@ import {
 } from '../services/songEditorHelper';
 import { db } from '../db';
 import { ChordProLineView } from './ChordProLineView';
+import { ConfirmDialogModal } from './ConfirmDialogModal';
 
 interface SongEditorModalProps {
   isOpen: boolean;
@@ -84,12 +86,17 @@ export const SongEditorModal: React.FC<SongEditorModalProps> = ({
   const [mobileTab, setMobileTab] = useState<'edit' | 'preview'>('edit');
   const [customChordInput, setCustomChordInput] = useState('');
   const [hasOriginalChords, setHasOriginalChords] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'delete' | 'restore' | null>(null);
+  const [isConfirmProcessing, setIsConfirmProcessing] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const originalSectionsRef = useRef<SongSection[]>([]);
 
   // Cargar datos al abrir el modal
   useEffect(() => {
+    setFormError(null);
+    setConfirmAction(null);
     if (initialSong) {
       setTitle(initialSong.title);
       setOriginalKey(initialSong.originalKey);
@@ -209,14 +216,15 @@ Por siempre y para siempre`);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
     if (!title.trim()) {
-      alert('Por favor ingresa un título para la canción.');
+      setFormError('Por favor ingresa un título para la canción.');
       return;
     }
 
     const parsedSections = parseTextToSections(rawText);
     if (parsedSections.length === 0) {
-      alert('Por favor escribe al menos una estrofa o sección.');
+      setFormError('Por favor escribe al menos una estrofa o sección.');
       return;
     }
 
@@ -287,18 +295,30 @@ Por siempre y para siempre`);
     onClose();
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!initialSong || !onDeleteSong) return;
-    if (!confirm(`¿Eliminar "${initialSong.title}" de tu dispositivo?`)) return;
-    await onDeleteSong(initialSong.id);
-    onClose();
+    setConfirmAction('delete');
   };
 
-  const handleRestoreOverrideClick = async () => {
+  const handleRestoreOverrideClick = () => {
     if (!initialSong || !onRestoreOverride) return;
-    if (!confirm(`¿Restaurar "${initialSong.title}" a la versión general para esta sede?`)) return;
-    await onRestoreOverride(initialSong.id);
-    onClose();
+    setConfirmAction('restore');
+  };
+
+  const executeConfirmedAction = async () => {
+    if (!initialSong || !confirmAction || isConfirmProcessing) return;
+    setIsConfirmProcessing(true);
+    try {
+      if (confirmAction === 'delete' && onDeleteSong) {
+        await onDeleteSong(initialSong.id);
+      } else if (confirmAction === 'restore' && onRestoreOverride) {
+        await onRestoreOverride(initialSong.id);
+      }
+      setConfirmAction(null);
+      onClose();
+    } finally {
+      setIsConfirmProcessing(false);
+    }
   };
 
   const modalContent = (
@@ -343,6 +363,13 @@ Por siempre y para siempre`);
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {formError && (
+              <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-700/60 text-xs text-rose-200 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <span>{formError}</span>
+              </div>
+            )}
+
             {!isMusicianMode && hasOriginalChords && (
               <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 text-[11px] sm:text-xs text-amber-200 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
@@ -675,6 +702,21 @@ Por siempre y para siempre`);
           </div>
         </form>
       </div>
+
+      <ConfirmDialogModal
+        isOpen={Boolean(confirmAction && initialSong)}
+        title={confirmAction === 'delete' ? 'Eliminar canción' : 'Restaurar versión general'}
+        message={
+          confirmAction === 'delete'
+            ? `¿Eliminar "${initialSong?.title || ''}" de tu dispositivo y de la nube?`
+            : `¿Restaurar "${initialSong?.title || ''}" a la versión general para esta sede?`
+        }
+        confirmLabel={confirmAction === 'delete' ? 'Eliminar' : 'Restaurar'}
+        variant={confirmAction === 'delete' ? 'danger' : 'warning'}
+        isProcessing={isConfirmProcessing}
+        onCancel={() => setConfirmAction(null)}
+        onConfirm={executeConfirmedAction}
+      />
     </div>
   );
 

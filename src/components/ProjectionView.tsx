@@ -127,11 +127,20 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
     }
   };
 
+  const supportsFullscreen =
+    typeof document !== 'undefined' &&
+    typeof document.documentElement?.requestFullscreen === 'function';
+
   const toggleFullScreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-    } else {
-      document.exitFullscreen().catch(() => {});
+    if (!supportsFullscreen) return;
+    try {
+      if (!document.fullscreenElement) {
+        Promise.resolve(document.documentElement.requestFullscreen()).catch(() => {});
+      } else if (typeof document.exitFullscreen === 'function') {
+        Promise.resolve(document.exitFullscreen()).catch(() => {});
+      }
+    } catch {
+      // Ignorar en navegadores iOS sin soporte Fullscreen API
     }
   };
 
@@ -140,11 +149,11 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onMouseMove={() => setShowControls(true)}
-      className="fixed inset-0 bg-black z-50 flex flex-col justify-between select-none overflow-hidden"
+      className="fixed inset-0 h-[100dvh] bg-black z-50 flex flex-col justify-between select-none overflow-hidden"
     >
       {/* Barra superior de controles flotantes */}
       <div
-        className={`p-3 sm:p-4 bg-gradient-to-b from-black/90 to-transparent flex items-center justify-between transition-opacity duration-300 z-20 ${
+        className={`p-3 sm:p-4 safe-top bg-gradient-to-b from-black/90 to-transparent flex items-center justify-between transition-opacity duration-300 z-20 ${
           showControls ? 'opacity-100' : 'opacity-0 hover:opacity-100'
         }`}
       >
@@ -177,16 +186,18 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
             <span className="hidden md:inline">Blackout [B]</span>
           </button>
 
-          <button
-            onClick={e => {
-              e.currentTarget.blur();
-              toggleFullScreen();
-            }}
-            title="Pantalla Completa"
-            className="p-1.5 sm:p-2 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
-          >
-            <Maximize className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-          </button>
+          {supportsFullscreen && (
+            <button
+              onClick={e => {
+                e.currentTarget.blur();
+                toggleFullScreen();
+              }}
+              title="Pantalla Completa"
+              className="p-1.5 sm:p-2 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
+            >
+              <Maximize className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            </button>
+          )}
 
           <button
             onClick={onClose}
@@ -246,7 +257,7 @@ export const ProjectionView: React.FC<ProjectionViewProps> = ({ song, onClose })
 
       {/* Barra Inferior de Navegación y Secciones */}
       <div
-        className={`p-3 sm:p-4 bg-gradient-to-t from-black/90 to-transparent flex items-center justify-between transition-opacity duration-300 z-20 ${
+        className={`p-3 sm:p-4 safe-bottom bg-gradient-to-t from-black/90 to-transparent flex items-center justify-between transition-opacity duration-300 z-20 ${
           showControls ? 'opacity-100' : 'opacity-0 hover:opacity-100'
         }`}
       >

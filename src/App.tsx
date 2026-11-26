@@ -457,7 +457,7 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+    <div className="min-h-[100dvh] bg-slate-950 text-slate-100 flex flex-col">
       {/* Barra de Notificación de Importación */}
       {importNotification && (
         <div className="bg-emerald-600 text-white text-xs sm:text-sm font-semibold py-2.5 px-4 text-center shadow-lg flex items-center justify-center gap-2">
