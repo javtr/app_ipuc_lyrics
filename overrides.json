@@ -128,5 +128,41 @@
     ],
     "updatedAt": "2026-11-13T22:53:40.082Z",
     "syncSource": "remote"
+  },
+  {
+    "id": "adoremos-a-rey_sede-palestina",
+    "baseSongId": "adoremos-a-rey",
+    "sedeId": "sede-palestina",
+    "customTitle": "Por eso yo le canto",
+    "customKey": "C",
+    "customSections": [
+      {
+        "id": "sec_1_verse",
+        "type": "verse",
+        "label": "Verso 1",
+        "lines": [
+          "Aquí está el poderoso,",
+          "Aquí están los redimidos",
+          "Aquí están todos los hijos de Jesucristo",
+          "Jesús es Dios y lo exaltamos,",
+          "Jesús es rey a él sea la gloria",
+          "Aquí están todos los hijos de Jesucristo."
+        ]
+      },
+      {
+        "id": "sec_2_verse",
+        "type": "verse",
+        "label": "Verso 2",
+        "lines": [
+          "//Adoremos al rey//",
+          "Poder y gloria, unción y victoria salen de su trono",
+          "//Adoremos al rey//",
+          "Levanten las manos los hijos de Dios",
+          "Llénense de poder."
+        ]
+      }
+    ],
+    "updatedAt": "2026-11-26T22:22:52.885Z",
+    "syncSource": "remote"
   }
 ]
