@@ -1,128 +1,228 @@
-# Plan de Desarrollo — Extractor Multi-Formato e Importación Masiva al Catálogo General (`catalog.json`)
+# Plan de Desarrollo — Optimización de Búsqueda (< 5 ms) y Paginación de 30 Canciones
 
-> **Estado:** Fase 1 (Discusión y Planificación en Modo Solo Lectura — Esperando aprobación expresa del usuario antes de crear/modificar archivos en `src/`, `functions/` o `tests/`, o de subir el catálogo a `origin/catalog`).
-
----
-
-## 1. Diagnóstico de las Fuentes Analizadas (`C:\Users\Javier-pc\Desktop\letras_ipuc`)
-
-Se inspeccionaron **1,346 archivos** en modo solo lectura, encontrando 4 fuentes con estructuras distintas:
-
-1. **`Coros RTF SIN REPETIR/` (1,181 archivos `.rtf`):**
-   - Codificación `Windows-1252` (`ansicpg1252`) con bloques internos extensos de Word (`{\*\datastore ...}`, `{\fonttbl ...}`) que deben ignorarse.
-   - El nombre suele traer sufijo numérico (`CELEBRA VICTORIOSO_1019.rtf`) y existen duplicados parciales (`_9.rtf`, `_10.rtf`). Muchas veces la primera línea repite el título y algunas estrofas están en mayúsculas sostenidas.
-2. **`presentaciones letras/` (163 archivos `.ppsx`):**
-   - Paquetes OpenXML ZIP (`ppt/slides/slide*.xml`).
-   - Cada diapositiva representa una sección natural; los saltos de línea internos usan `<a:br/>` dentro de `<a:p>`, y los marcadores de pie/número de diapositiva (`1,4`, `2,4`) viven en formas `<p:ph type="ftr"|"sldNum"|"dt"|"hdr"/>` que deben excluirse.
-3. **`Himnario Lluvias de Bendición.pdf` (253 páginas):**
-   - Diseño de **1 columna** con ~253 himnos numerados (`1. LOORES DAD A CRISTO EL REY` ... `253. A DIOS EL PADRE` hasta página 251), estrofas en números romanos (`I`, `II`, `III`...) y secciones `CORO`.
-   - Con `pdfplumber` (`x_tolerance=3, y_tolerance=3`) el texto sale limpio sin partir palabras.
-4. **`himnario manantial de inspiracion.pdf` (142 páginas):**
-   - Páginas 1–10: portada/presentación. Páginas **11–116**: himnos numerados en **diseño de 2 columnas por página**, con estrofas (`I`, `II`...), `Coro` y nombre del autor al pie. Páginas **117–142**: consejos útiles e índices alfabéticos/temáticos (se excluyen).
-   - Requiere recorte por columna (`izquierda` y luego `derecha` con `pdfplumber`) para no mezclar líneas de dos himnos distintos.
+> **Estado:** Fase 1 (Discusión y Planificación en Modo Solo Lectura — Esperando aprobación expresa del usuario antes de modificar `src/` o `tests/`).
 
 ---
 
-## 2. Objetivo Técnico
+## 1. Objetivo Técnico
 
-1. **Crear el script importador en Python (`src/scripts/import_catalog.py`):**
-   - Leer en **modo solo lectura** todas las fuentes de `C:\Users\Javier-pc\Desktop\letras_ipuc`.
-   - Parsear `.rtf`, `.ppsx`, `Lluvias` (1 columna) y `Manantial` (2 columnas), limpiar títulos (eliminando prefijos numéricos `123. `, sufijos `_1019` y normalizando mayúsculas sostenidas a formato legible), detectar secciones (`Verso 1..N`, `Coro`) y asignar etiquetas por fuente (`"Himnario Lluvias de Bendición"`, `"Manantial de Inspiración"`, `"Coro"`, `"Presentación"`).
-   - **Preservar canciones existentes del catálogo (`origin/catalog:catalog.json`)**: conservar intactos sus acordes ChordPro, `originalKey`, `bpm`, `timeSignature`, `artist` y `tags`.
-   - **Deduplicar inteligentemente** por título normalizado (sin tildes ni signos `¡`/`¿`) y similitud de letra, conservando la versión de mayor prioridad (`Catálogo actual con acordes` > `Lluvias` > `Manantial` > `PPSX` > `RTF`) y generando IDs slug únicos (`BaseSong` válido para [`isValidBaseSong`](file:///f:/Desarrollo/app_lyrics/src/services/gitSyncService.ts#L48-L59)).
-   - Emitir un archivo `src/data/imported_catalog.json` validado y un resumen estadístico detallado (conteo por fuente, duplicados fusionados, tamaño total y posibles archivos vacíos/ilegibles).
-2. **Asegurar soporte para catálogos > 1 MB en el backend ([`functions/_lib/github.ts`](file:///f:/Desarrollo/app_lyrics/functions/_lib/github.ts)):**
-   - GitHub REST API `/contents/` omite `payload.content` cuando un archivo supera 1 MB. Actualizar `getJsonFile` para hacer fallback automático a `/git/blobs/{sha}` si `payload.content` viene vacío y `payload.sha` está presente, y guardar JSON compacto en `putJsonFile` para minimizar tamaño y consumo móvil.
-3. **Subida controlada a `origin/catalog`:**
-   - Validar el JSON generado con pruebas unitarias/validación de esquema `BaseSong` y publicar `catalog.json` en la rama `catalog` de `javtr/app_ipuc_lyrics` para que esté disponible en toda la iglesia al instante vía `/api/sync`.
+Eliminar la lentitud y el bloqueo al escribir en la barra de búsqueda con catálogos de **1,700+ canciones**, y evitar recorridos verticales interminables paginando la lista de canciones a un máximo de **30 canciones por página**:
+
+1. **Pre-indexación en memoria (`useMemo` + `Map` O(1)):**
+   - Actualmente `App.tsx` ejecuta en **cada pulsación de tecla** la resolución de sede `O(N × M)` sobre `overrides`, extrae acordes por regex de todas las estrofas de las 1,722 canciones para filtrar (`matchesSongTitleOrLyrics`) y para previsualizar la primera línea (`getSongOpeningLine`), ordena todo y renderiza 1,722 tarjetas DOM simultáneamente.
+   - Con un índice pre-calculado **una sola vez** al cargar o cambiar `songs`, `overrides` o `activeSedeId`:
+     - Las overrides de la sede activa se indexan en un `Map<baseSongId, SedeSongOverride>` (`O(1)`).
+     - Se ordena el catálogo alfabéticamente en español **una sola vez**.
+     - Se pre-calculan por canción: `openingLine`, `letter`, `normTitle` y `normLyrics` (limpio sin corchetes ChordPro y normalizado sin tildes).
+     - Al escribir en el buscador (usando además `useDeferredValue(searchQuery)`), el filtrado compara únicamente cadenas ya normalizadas (`.includes(normalizedQuery)`) y prioriza coincidencias en título sobre coincidencias dentro de la letra, tardando **< 5 ms** sin bloquear el teclado.
+2. **Paginación compacta (30 canciones por página) integrada con el índice `A–Z`:**
+   - Mostrar máximo **`30` canciones por página** (`CATALOG_PAGE_SIZE = 30`), agrupadas bajo sus encabezados de letra (`A`, `B`, `C`, ...).
+   - Al escribir en el buscador o cambiar de sede, reiniciar automáticamente a la **página 1**.
+   - Añadir barra de paginación compacta (`Anterior` / `Pág. X de Y (inicio–fin de total)` / `Siguiente`) para desplazarse fácilmente y permitir llegar de inmediato a la barra inferior en móvil.
+   - Conectar los botones del índice **`A–Z`**: al pulsar cualquier letra disponible (ej. `M`), calcular la página exacta donde inicia esa letra en el catálogo filtrado, cambiar a esa página y enfocar/desplazar suavemente hacia el encabezado de la letra (resaltando además qué letra(s) están visibles en la página actual).
+   - Añadir botón `X` dentro del buscador para limpiar la consulta en 1 toque.
+3. **Misma optimización en el buscador de Repertorios ([`SetlistManager.tsx`](file:///f:/Desarrollo/app_lyrics/src/components/SetlistManager.tsx)):**
+   - Memorizar (`useMemo`) la lista ordenada alfabéticamente y diferir `songSearchQuery` con `useDeferredValue` para mantener respuesta instantánea al armar cultos sobre miles de canciones.
 
 ---
 
-## 3. Pseudocódigo y Flujo Lógico
+## 2. Pseudocódigo y Flujo Lógico
 
-### A. Script Importador (`src/scripts/import_catalog.py`)
-
-```python
-# 1. Extractores por formato (solo lectura)
-def parse_rtf_text(path) -> str:
-    # Leer bytes en cp1252; recorrer grupos {...} con pila:
-    # - Ignorar destinos especiales (\*\..., fonttbl, colortbl, stylesheet, info, header, footer, datastore)
-    # - Decodificar \'hh (cp1252), \uN, \par/\line -> '\n', \tab -> ' '
-    # - Limpiar líneas vacías repetidas
-
-def parse_ppsx_slides(path) -> list[list[str]]:
-    # Abrir ZIP; ordenar ppt/slides/slide(\d+).xml numéricamente
-    # Para cada <p:sp>: ignorar si tiene <p:ph type="ftr"|"sldNum"|"dt"|"hdr"/>
-    # Para cada <a:p>: unir <a:t> y convertir <a:br/> en salto de línea '\n'
-    # Devolver lista de diapositivas no vacías
-
-def parse_pdf_lluvias(path) -> list[RawSong]:
-    # Páginas 1..251 con pdfplumber (x_tolerance=3, y_tolerance=3)
-    # Concatenar líneas eliminando números sueltos de página
-    # Dividir por cabecera ^(\d{1,3})\.\s+(.+)$ -> (num, title, body_lines)
-
-def parse_pdf_manantial(path) -> list[RawSong]:
-    # Páginas 11..116 con pdfplumber; detenerse si aparece "Consejos Utiles"
-    # Por cada página: recortar (0, 0, mid, h) y luego (mid, 0, w, h)
-    # Descartar ruido numérico aislado ('0' en encabezado)
-    # Dividir por cabecera ^(\d{1,3})\.\s+(.+)$ y detectar línea final de autor si aplica
-
-# 2. Constructor de secciones BaseSong
-def build_sections(blocks_or_lines) -> list[SongSection]:
-    # Detectar encabezados I, II, III, IV... -> Verso 1, Verso 2...
-    # Detectar "CORO" / "Coro:" -> type='chorus', label='Coro'
-    # Si no hay marcadores explícitos, dividir por bloques separados por línea en blanco
-    # Garantizar al menos 1 sección válida con líneas no vacías
-
-# 3. Fusión y Deduplicación
-def merge_and_deduplicate(existing_catalog, extracted_sources) -> list[BaseSong]:
-    # index_by_norm_title: mapa de título normalizado -> canción ganadora
-    # 1) Insertar canciones de existing_catalog (protegidas; conservan acordes, id y metadata)
-    # 2) Recorrer fuentes en orden de prioridad: Lluvias -> Manantial -> PPSX -> RTF
-    #    - Si título normalizado ya existe: fusionar tags faltantes y conservar la canción prioritaria
-    #    - Si es nueva: asignar slug único (a-z0-9-), originalKey='C', updatedAt=NOW_ISO
-    # 3) Ordenar resultado alfabéticamente y escribir JSON compacto en src/data/imported_catalog.json
-```
-
-### B. Lectura Segura > 1 MB en Backend (`functions/_lib/github.ts`)
+### A. Índice Memorizado y Paginación Pura (`src/services/songEditorHelper.ts`)
 
 ```ts
-// En getJsonFile(env, branch, filePath):
-const payload = (await res.json()) as { content?: string; sha?: string };
-let encodedContent = payload.content;
+export const CATALOG_PAGE_SIZE = 30;
 
-// Si GitHub omite content (archivo > 1 MB), leer vía Git Blob API usando el sha
-if (!encodedContent && payload.sha) {
-  const blobRes = await githubFetch(env, `/git/blobs/${encodeURIComponent(payload.sha)}`);
-  if (!blobRes.ok) {
-    throw new Error(`Error al leer blob de ${filePath} (HTTP ${blobRes.status})`);
-  }
-  const blobPayload = (await blobRes.json()) as { content?: string };
-  encodedContent = blobPayload.content;
+export interface IndexedCatalogItem {
+  song: BaseSong;
+  resolvedItem: DisplaySong;
+  letter: string;
+  openingLine: string;
+  normTitle: string;
+  normLyrics: string;
 }
 
-// En putJsonFile: usar JSON.stringify(data) compacto si filePath === 'catalog.json' o tamaño > 500 KB
+export function buildIndexedCatalog(
+  songs: BaseSong[],
+  activeSedeId: string,
+  overrides: SedeSongOverride[],
+  sedeLabel: string
+): IndexedCatalogItem[] {
+  // 1. Indexar overrides de activeSedeId en un Map O(1) por baseSongId
+  const sedeOverrideMap = new Map<string, SedeSongOverride>();
+  if (activeSedeId && activeSedeId !== 'general') {
+    for (const ov of overrides) {
+      if (ov.sedeId === activeSedeId) sedeOverrideMap.set(ov.baseSongId, ov);
+    }
+  }
+
+  // 2. Filtrar visibles en sede y ordenar alfabéticamente UNA sola vez
+  const visible = songs
+    .filter(s => isSongVisibleInSede(s, activeSedeId))
+    .sort((a, b) => compareSongTitlesEs(a.title, b.title));
+
+  // 3. Pre-computar resolvedItem, openingLine, letter y strings normalizados de búsqueda
+  return visible.map(song => {
+    const ov = sedeOverrideMap.get(song.id);
+    const resolvedItem = ov
+      ? resolveSongForDisplay(song, activeSedeId, [ov], { sedeLabel })
+      : resolveSongForDisplay(song, activeSedeId, [], { sedeLabel });
+    const cleanLyrics = resolvedItem.sections
+      .flatMap(sec => getCleanLyrics(sec.lines))
+      .join(' ')
+      .replace(/\s+/g, ' ');
+
+    return {
+      song,
+      resolvedItem,
+      letter: getSongInitialLetter(song.title),
+      openingLine: getSongOpeningLine(resolvedItem.sections),
+      normTitle: normalizeSearchText(`${song.title} ${resolvedItem.title}`).replace(/\s+/g, ' '),
+      normLyrics: normalizeSearchText(cleanLyrics)
+    };
+  });
+}
+
+export function filterIndexedCatalog(
+  indexedItems: IndexedCatalogItem[],
+  query: string
+): IndexedCatalogItem[] {
+  const normQuery = normalizeSearchText(query).replace(/\s+/g, ' ');
+  if (!normQuery) return indexedItems;
+
+  const titleMatches: IndexedCatalogItem[] = [];
+  const lyricsMatches: IndexedCatalogItem[] = [];
+
+  for (const item of indexedItems) {
+    if (item.normTitle.includes(normQuery)) titleMatches.push(item);
+    else if (item.normLyrics.includes(normQuery)) lyricsMatches.push(item);
+  }
+  return [...titleMatches, ...lyricsMatches];
+}
+
+export function paginateCatalogItems(
+  items: IndexedCatalogItem[],
+  requestedPage: number,
+  pageSize: number = CATALOG_PAGE_SIZE
+): {
+  pageItems: IndexedCatalogItem[];
+  currentPage: number;
+  totalPages: number;
+  startIndex: number;
+  endIndex: number;
+} {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const currentPage = Math.min(Math.max(1, requestedPage), totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageItems = items.slice(startIndex, startIndex + pageSize);
+  return {
+    pageItems,
+    currentPage,
+    totalPages,
+    startIndex,
+    endIndex: startIndex + pageItems.length
+  };
+}
 ```
+
+### B. Flujo en `src/App.tsx` (Índice Reactivo, Salto de Página por Letra y Paginador)
+
+```tsx
+const [currentPage, setCurrentPage] = useState<number>(1);
+const [pendingJumpLetter, setPendingJumpLetter] = useState<string | null>(null);
+const deferredSearchQuery = useDeferredValue(searchQuery);
+
+// 1. Pre-índice memoizado (se recalcula solo si cambian canciones, overrides o sede)
+const indexedCatalog = useMemo(
+  () => buildIndexedCatalog(songs, activeSedeId, overrides, currentSedeProfile.name),
+  [songs, activeSedeId, overrides, currentSedeProfile.name]
+);
+
+// 2. Filtrado instantáneo sobre strings ya normalizados (< 5 ms)
+const filteredCatalog = useMemo(
+  () => filterIndexedCatalog(indexedCatalog, deferredSearchQuery),
+  [indexedCatalog, deferredSearchQuery]
+);
+
+// Reiniciar a página 1 al cambiar búsqueda o sede
+useEffect(() => {
+  setCurrentPage(1);
+}, [deferredSearchQuery, activeSedeId]);
+
+// 3. Calcular páginas disponibles y primera página de cada letra
+const { pageItems, currentPage: safePage, totalPages, startIndex, endIndex } = useMemo(
+  () => paginateCatalogItems(filteredCatalog, currentPage, CATALOG_PAGE_SIZE),
+  [filteredCatalog, currentPage]
+);
+
+const firstPageByLetter = useMemo(() => {
+  const map = new Map<string, number>();
+  filteredCatalog.forEach((item, idx) => {
+    if (!map.has(item.letter)) {
+      map.set(item.letter, Math.floor(idx / CATALOG_PAGE_SIZE) + 1);
+    }
+  });
+  return map;
+}, [filteredCatalog]);
+
+// 4. Agrupar ÚNICAMENTE las <= 30 canciones de la página actual
+const groupedPageCatalog = useMemo(
+  () => groupEntriesAlphabetically(pageItems, item => item.song.title),
+  [pageItems]
+);
+
+// 5. Al pulsar letra L en el índice A-Z:
+const handleJumpToLetter = (letter: string) => {
+  const targetPage = firstPageByLetter.get(letter);
+  if (!targetPage) return;
+  setCurrentPage(targetPage);
+  setPendingJumpLetter(letter);
+};
+
+// Efecto post-render: cuando carga la página destino, hace scroll suave al encabezado de esa letra
+useEffect(() => {
+  if (!pendingJumpLetter) return;
+  const el = letterSectionRefs.current[pendingJumpLetter];
+  if (el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setPendingJumpLetter(null);
+  }
+}, [pendingJumpLetter, safePage, groupedPageCatalog]);
+```
+
+### C. Controles de UI Compactos (`src/App.tsx`)
+
+1. **Barra de búsqueda:** añadir botón `X` cuando `searchQuery` no esté vacío y mostrar debajo un conteo discreto al buscar (ej. `"14 coincidencias"`).
+2. **Barra `A–Z`:** usa `firstPageByLetter` (calculada sobre TODO `filteredCatalog`) y resalta las letras visibles actualmente en la página (`pageLetters`) en verde esmeralda.
+3. **Paginador debajo (y resumen arriba si `totalPages > 1`):**
+   - Muestra `Anterior` (deshabilitado en pág. 1), `Pág. {safePage} / {totalPages} · {startIndex + 1}–{endIndex} de {filteredCatalog.length}`, y `Siguiente` (deshabilitado en última pág.).
+   - Al cambiar de página con `Anterior`/`Siguiente`, hace scroll suave al inicio del contenedor/catálogo (`catalogTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })`).
 
 ---
 
-## 4. Impacto (Archivos, Clases y Métodos Afectados)
+## 3. Impacto (Archivos, Clases y Métodos Afectados)
 
 | Archivo | Elemento | Cambio |
 | :--- | :--- | :--- |
-| `src/scripts/import_catalog.py` | Script completo | Nuevo script de extracción RTF / PPSX / PDF (1 y 2 columnas), normalización, deduplicación y exportación a `BaseSong[]`. |
-| `src/data/imported_catalog.json` | Catálogo generado | Salida JSON validada lista para publicar en la rama `catalog` (`catalog.json`). |
-| `functions/_lib/github.ts` | `getJsonFile`, `putJsonFile` | Soporte transparente para archivos > 1 MB vía `/git/blobs/{sha}` y escritura JSON compacta para catálogos grandes. |
-| `tests/etapaB.test.ts` | Suite Etapa B | Prueba unitaria para `getJsonFile` cuando GitHub omite `content` y responde vía `/git/blobs/{sha}`, más validación del catálogo importado. |
+| `src/services/songEditorHelper.ts` | `CATALOG_PAGE_SIZE`, `IndexedCatalogItem`, `buildIndexedCatalog`, `filterIndexedCatalog`, `paginateCatalogItems` | Nuevos helpers puros para pre-indexar, filtrar en memoria sin regex repetidos y paginar de 30 en 30. |
+| `src/App.tsx` | `App` | Usar `useMemo` + `useDeferredValue`, renderizar máximo 30 canciones por página, conectar salto de página en `A–Z`, añadir botón limpiar `X` y controles de paginación. |
+| `src/components/SetlistManager.tsx` | `SetlistManager` | Añadir `useMemo` + `useDeferredValue` sobre `selectableSongs` y `songSearchQuery` para búsqueda fluida en repertorios. |
+| `tests/stabilization.test.ts` | Suite de estabilización | Añadir pruebas unitarias para `buildIndexedCatalog`, `filterIndexedCatalog` (prioridad título sobre letra + ChordPro limpio), `paginateCatalogItems` (30 por página) y cálculo de salto por letra entre páginas. |
 
 ---
 
-## 5. Ubicación Exacta de Modificaciones
+## 4. Ubicación Exacta de Modificaciones
 
-1. **[`src/scripts/import_catalog.py`](file:///f:/Desarrollo/app_lyrics/src/scripts/import_catalog.py):** archivo nuevo.
-2. **[`src/data/imported_catalog.json`](file:///f:/Desarrollo/app_lyrics/src/data/imported_catalog.json):** archivo nuevo generado por el script (temporal/exportación verificable).
-3. **[`functions/_lib/github.ts`](file:///f:/Desarrollo/app_lyrics/functions/_lib/github.ts#L80-L125):**
-   - En `getJsonFile` (líneas 98–107): añadir fallback a `/git/blobs/${payload.sha}` cuando `!payload.content && payload.sha`.
-   - En `putJsonFile` (línea 121): usar serialización compacta (`JSON.stringify(data)`) cuando la longitud supere 500 KB.
-4. **[`tests/etapaB.test.ts`](file:///f:/Desarrollo/app_lyrics/tests/etapaB.test.ts#L730-L738):**
-   - Al final del archivo, añadir prueba de lectura de blob > 1 MB en `/api/commit` (`getJsonFile`).
+1. **[`src/services/songEditorHelper.ts`](file:///f:/Desarrollo/app_lyrics/src/services/songEditorHelper.ts#L1-L238):**
+   - Línea 1–3: importar `DisplaySong`, `SedeSongOverride` desde `../types` y `resolveSongForDisplay`, `isSongVisibleInSede` desde `./songResolver`.
+   - Al final del archivo (después de la línea 238): añadir `CATALOG_PAGE_SIZE = 30`, `IndexedCatalogItem`, `buildIndexedCatalog`, `filterIndexedCatalog` y `paginateCatalogItems`.
+2. **[`src/App.tsx`](file:///f:/Desarrollo/app_lyrics/src/App.tsx#L1-L650):**
+   - Líneas 1–24: importar `useMemo`, `useDeferredValue` de `react`; `ChevronLeft`, `ChevronRight`, `X` de `lucide-react`; y los nuevos helpers de `./services/songEditorHelper`.
+   - Líneas 68–92: agregar estados `currentPage`, `pendingJumpLetter`, `deferredSearchQuery` y ref `catalogTopRef`.
+   - Líneas 243–280: reemplazar cálculo no memoizado de `visibleSongs`/`catalogEntries`/`groupedCatalog` por `indexedCatalog` + `filteredCatalog` + `paginateCatalogItems` + `firstPageByLetter` + `groupedPageCatalog`.
+   - Líneas 510–645: añadir botón limpiar `X` en el buscador, actualizar barra `A–Z` para saltar a la página de la letra, renderizar solo `groupedPageCatalog` (≤ 30 ítems usando el `openingLine` ya pre-calculado) y agregar barra de paginación debajo de la lista.
+3. **[`src/components/SetlistManager.tsx`](file:///f:/Desarrollo/app_lyrics/src/components/SetlistManager.tsx#L1-L120):**
+   - Línea 1: importar `useMemo`, `useDeferredValue`.
+   - Líneas 110–120: memoizar `selectableSongs` y diferir `songSearchQuery` antes de llamar `filterAndSortSongsByTitle`.
+4. **[`tests/stabilization.test.ts`](file:///f:/Desarrollo/app_lyrics/tests/stabilization.test.ts#L12-L702):**
+   - Importar `CATALOG_PAGE_SIZE`, `buildIndexedCatalog`, `filterIndexedCatalog`, `paginateCatalogItems` y añadir suite `[UX7]` probando búsqueda + paginación de 30 sobre un catálogo grande simulado (100 canciones).

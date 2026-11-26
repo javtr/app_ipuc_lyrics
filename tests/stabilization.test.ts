@@ -10,8 +10,11 @@ import {
 } from '../src/services/chordParser';
 import { parseTextToSections } from '../src/services/chordSerializer';
 import {
+  CATALOG_PAGE_SIZE,
+  buildIndexedCatalog,
   buildOverrideTitle,
   filterAndSortSongsByTitle,
+  filterIndexedCatalog,
   generateUniqueSongSlug,
   getSongInitialLetter,
   getSongOpeningLine,
@@ -19,6 +22,7 @@ import {
   hasChordAnnotations,
   matchesSongTitleOrLyrics,
   normalizeSearchText,
+  paginateCatalogItems,
   restoreChordsInEditedSections
 } from '../src/services/songEditorHelper';
 import { resolveSongForDisplay, isSongVisibleInSede } from '../src/services/songResolver';
@@ -702,5 +706,47 @@ describe('Estabilización y Regresión: Validación + Nuevos Hallazgos + Correcc
       })
     );
     expect(manyHtml).toContain('Mostrando 30 de 35 canciones');
+  });
+
+  it('[UX7] buildIndexedCatalog precalcula índice veloz, prioriza título y pagina de 30 en 30 canciones', () => {
+    const bulkSongs: BaseSong[] = Array.from({ length: 75 }, (_, idx) => ({
+      ...baseSong,
+      id: `himno-${idx + 1}`,
+      title: idx < 40 ? `Alabanza ${String(idx + 1).padStart(2, '0')}` : `Canto ${String(idx + 1).padStart(2, '0')}`,
+      sections: [
+        {
+          id: 'v1',
+          type: 'verse',
+          label: 'Verso 1',
+          lines: idx === 70 ? ['[G]Esta estrofa menciona misericordia eterna'] : ['[C]Letra normal de prueba']
+        }
+      ]
+    }));
+
+    const indexed = buildIndexedCatalog(bulkSongs, 'general', [], 'Catálogo General');
+    expect(indexed).toHaveLength(75);
+    expect(indexed[0].letter).toBe('A');
+    expect(indexed[70].normLyrics).toContain('misericordia');
+
+    // Filtrado sobre letra precalculada sin corchetes
+    const lyricsHits = filterIndexedCatalog(indexed, 'misericordia');
+    expect(lyricsHits).toHaveLength(1);
+    expect(lyricsHits[0].song.id).toBe('himno-71');
+
+    // Paginación estricta de 30 en 30 (75 canciones => 3 páginas: 30, 30, 15)
+    expect(CATALOG_PAGE_SIZE).toBe(30);
+    const p1 = paginateCatalogItems(indexed, 1, CATALOG_PAGE_SIZE);
+    expect(p1.pageItems).toHaveLength(30);
+    expect(p1.totalPages).toBe(3);
+    expect(p1.startIndex).toBe(0);
+    expect(p1.endIndex).toBe(30);
+
+    const p3 = paginateCatalogItems(indexed, 3, CATALOG_PAGE_SIZE);
+    expect(p3.pageItems).toHaveLength(15);
+    expect(p3.currentPage).toBe(3);
+
+    // Página donde empieza la letra 'C' (índice 40 => página 2)
+    const firstCIndex = indexed.findIndex(item => item.letter === 'C');
+    expect(Math.floor(firstCIndex / CATALOG_PAGE_SIZE) + 1).toBe(2);
   });
 });

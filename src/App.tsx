@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   BookOpen,
@@ -9,7 +9,10 @@ import {
   Plus,
   Music,
   AlertTriangle,
-  Church
+  Church,
+  X,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { db, initializeDatabase } from './db';
 import { AdminSession, BaseSong, SedeProfile, SyncStatus } from './types';
@@ -18,9 +21,11 @@ import { decompressSetlist } from './services/urlSharing';
 import { checkAndRequestStoragePersistence } from './services/backupService';
 import {
   ALPHABET_LETTERS,
-  getSongOpeningLine,
+  CATALOG_PAGE_SIZE,
+  buildIndexedCatalog,
+  filterIndexedCatalog,
   groupEntriesAlphabetically,
-  matchesSongTitleOrLyrics
+  paginateCatalogItems
 } from './services/songEditorHelper';
 import {
   getLastSyncAt,
@@ -66,6 +71,9 @@ export function App() {
   const [isProjectionMode, setIsProjectionMode] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pendingJumpLetter, setPendingJumpLetter] = useState<string | null>(null);
   const [correctionSong, setCorrectionSong] = useState<BaseSong | null>(null);
   const [importNotification, setImportNotification] = useState<string | null>(null);
   const [isSedeSelectorOpen, setIsSedeSelectorOpen] = useState<boolean>(false);
@@ -88,6 +96,8 @@ export function App() {
   const importTimerRef = useRef<number | null>(null);
   const lastAutoSyncMsRef = useRef<number>(0);
   const letterSectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const catalogTopRef = useRef<HTMLDivElement | null>(null);
+  const catalogListRef = useRef<HTMLDivElement | null>(null);
 
   const toggleMusicianMode = () => {
     const nextMode = !isMusicianMode;
@@ -240,30 +250,80 @@ export function App() {
     shortName: activeSedeId === 'general' ? 'General' : activeSedeId.replace(/^sede-/, '')
   };
 
-  // Filtrado por visibilidad de sede y búsqueda por título o contenido limpio de letra
-  const visibleSongs = songs.filter(song => isSongVisibleInSede(song, activeSedeId));
-  const catalogEntries = visibleSongs
-    .map(song => ({
-      song,
-      resolvedItem: resolveSongForDisplay(song, activeSedeId, overrides, {
-        sedeLabel: currentSedeProfile.name
-      })
-    }))
-    .filter(({ song, resolvedItem }) =>
-      matchesSongTitleOrLyrics(song, searchQuery, resolvedItem.sections, resolvedItem.title)
-    );
+  // Pre-índice memoizado, filtrado instantáneo y paginación de 30 canciones por página
+  const indexedCatalog = useMemo(
+    () => buildIndexedCatalog(songs, activeSedeId, overrides, currentSedeProfile.name),
+    [songs, activeSedeId, overrides, currentSedeProfile.name]
+  );
 
-  const groupedCatalog = groupEntriesAlphabetically(catalogEntries, entry => entry.song.title);
-  const availableLetters = new Set(groupedCatalog.map(g => g.letter));
-  const indexLetters = availableLetters.has('#')
+  const filteredCatalog = useMemo(
+    () => filterIndexedCatalog(indexedCatalog, deferredSearchQuery),
+    [indexedCatalog, deferredSearchQuery]
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setPendingJumpLetter(null);
+  }, [deferredSearchQuery, activeSedeId]);
+
+  const {
+    pageItems,
+    currentPage: safePage,
+    totalPages,
+    startIndex,
+    endIndex
+  } = useMemo(
+    () => paginateCatalogItems(filteredCatalog, currentPage, CATALOG_PAGE_SIZE),
+    [filteredCatalog, currentPage]
+  );
+
+  const firstPageByLetter = useMemo(() => {
+    const map = new Map<string, number>();
+    filteredCatalog.forEach((item, idx) => {
+      if (!map.has(item.letter)) {
+        map.set(item.letter, Math.floor(idx / CATALOG_PAGE_SIZE) + 1);
+      }
+    });
+    return map;
+  }, [filteredCatalog]);
+
+  const groupedPageCatalog = useMemo(
+    () => groupEntriesAlphabetically(pageItems, item => item.song.title),
+    [pageItems]
+  );
+
+  const pageLetters = useMemo(
+    () => new Set(groupedPageCatalog.map(g => g.letter)),
+    [groupedPageCatalog]
+  );
+
+  const indexLetters = firstPageByLetter.has('#')
     ? [...ALPHABET_LETTERS, '#']
     : ALPHABET_LETTERS;
 
-  const scrollToLetter = (letter: string) => {
-    const target = letterSectionRefs.current[letter];
+  const handleJumpToLetter = (letter: string) => {
+    const targetPage = firstPageByLetter.get(letter);
+    if (!targetPage) return;
+    setCurrentPage(targetPage);
+    setPendingJumpLetter(letter);
+  };
+
+  useEffect(() => {
+    if (!pendingJumpLetter) return;
+    const target = letterSectionRefs.current[pendingJumpLetter];
     if (target) {
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setPendingJumpLetter(null);
     }
+  }, [pendingJumpLetter, safePage, groupedPageCatalog]);
+
+  const goToPage = (nextPage: number) => {
+    setPendingJumpLetter(null);
+    setCurrentPage(nextPage);
+    if (catalogListRef.current) {
+      catalogListRef.current.scrollTop = 0;
+    }
+    catalogTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   // Resolución segura sin sustituciones silenciosas cuando una canción de repertorio falta offline
@@ -276,7 +336,7 @@ export function App() {
   const isMissingRequestedSong = Boolean(isExplicitSongSelection && songs.length > 0 && !foundSelectedSong);
   const activeBaseSong =
     foundSelectedSong ||
-    (isExplicitSongSelection ? undefined : groupedCatalog[0]?.items[0]?.song || visibleSongs[0]);
+    (isExplicitSongSelection ? undefined : indexedCatalog[0]?.song);
 
   const activeDisplaySong = activeBaseSong
     ? resolveSongForDisplay(activeBaseSong, activeSedeId, overrides, {
@@ -390,7 +450,9 @@ export function App() {
     setSongContextSedeId(null);
     setSelectedItemKey(null);
     setSetlistNavContext(null);
-    setSelectedSongId(visibleSongs.find(s => s.id !== songId)?.id || 'sublime-gracia');
+    setSelectedSongId(
+      indexedCatalog.find(item => item.song.id !== songId)?.song.id || 'sublime-gracia'
+    );
     setMobileView('list');
   };
 
@@ -507,7 +569,7 @@ export function App() {
               mobileView === 'detail' ? 'hidden lg:block' : 'block'
             }`}>
               {/* Barra de Búsqueda y Botón Nueva Canción (solo con sesión autorizada) */}
-              <div className="flex items-center gap-2">
+              <div ref={catalogTopRef} className="flex items-center gap-2 scroll-mt-2">
                 <div className="relative flex-1">
                   <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
@@ -515,8 +577,18 @@ export function App() {
                     placeholder="Buscar por título o parte de la letra..."
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 sm:py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                    className="w-full pl-10 pr-9 py-2 sm:py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
                   />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      aria-label="Limpiar búsqueda"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
                 {canCreateInActiveSede && (
                   <button
@@ -530,25 +602,28 @@ export function App() {
                 )}
               </div>
 
-              {/* Índice Alfabético Rápido (1 fila compacta deslizable) */}
-              {groupedCatalog.length > 1 && (
+              {/* Índice Alfabético Rápido (salta directo a la página de la letra) */}
+              {firstPageByLetter.size > 1 && (
                 <div
                   aria-label="Índice alfabético de canciones"
                   className="flex items-center gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 >
                   {indexLetters.map(letter => {
-                    const hasSongs = availableLetters.has(letter);
+                    const hasSongs = firstPageByLetter.has(letter);
+                    const isVisibleInCurrentPage = pageLetters.has(letter);
                     return (
                       <button
                         key={letter}
                         type="button"
                         disabled={!hasSongs}
-                        onClick={() => scrollToLetter(letter)}
+                        onClick={() => handleJumpToLetter(letter)}
                         title={hasSongs ? `Ir a la letra ${letter}` : `Sin canciones por ${letter}`}
                         className={`w-6 h-6 rounded-lg text-[11px] font-bold shrink-0 flex items-center justify-center transition-colors ${
-                          hasSongs
-                            ? 'bg-slate-900 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-slate-800'
-                            : 'text-slate-600/40 cursor-default'
+                          isVisibleInCurrentPage
+                            ? 'bg-emerald-600 text-white border border-emerald-500 shadow-sm'
+                            : hasSongs
+                              ? 'bg-slate-900 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-slate-800'
+                              : 'text-slate-600/40 cursor-default'
                         }`}
                       >
                         {letter}
@@ -558,9 +633,12 @@ export function App() {
                 </div>
               )}
 
-              {/* Lista de Canciones Agrupada Alfabéticamente */}
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-1.5 sm:p-2 space-y-2 lg:max-h-[calc(100vh-285px)] lg:overflow-y-auto">
-                {groupedCatalog.map(group => (
+              {/* Lista de Canciones Paginada (máx. 30 por página) y Agrupada Alfabéticamente */}
+              <div
+                ref={catalogListRef}
+                className="bg-slate-900/60 border border-slate-800 rounded-2xl p-1.5 sm:p-2 space-y-2 lg:max-h-[calc(100vh-320px)] lg:overflow-y-auto"
+              >
+                {groupedPageCatalog.map(group => (
                   <div
                     key={group.letter}
                     ref={el => {
@@ -577,11 +655,10 @@ export function App() {
                       </span>
                     </div>
 
-                    {group.items.map(({ song, resolvedItem }) => {
+                    {group.items.map(({ song, resolvedItem, openingLine }) => {
                       const hasLocalOverride = resolvedItem.isLocalOverride;
                       const isSedeExclusive = Boolean(song.sedeId && song.sedeId !== 'general');
                       const showSedeBadge = hasLocalOverride || isSedeExclusive;
-                      const openingLine = getSongOpeningLine(resolvedItem.sections);
                       const isSelected = activeBaseSong ? song.id === activeBaseSong.id : false;
 
                       return (
@@ -637,12 +714,48 @@ export function App() {
                   </div>
                 ))}
 
-                {catalogEntries.length === 0 && (
+                {filteredCatalog.length === 0 && (
                   <div className="py-8 text-center text-xs text-slate-500">
                     No se encontraron canciones que coincidan.
                   </div>
                 )}
               </div>
+
+              {/* Controles de Paginación (30 canciones por página) */}
+              {filteredCatalog.length > 0 && (
+                <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-slate-900/70 border border-slate-800 text-xs">
+                  <button
+                    type="button"
+                    disabled={safePage <= 1}
+                    onClick={() => goToPage(safePage - 1)}
+                    aria-label="Página anterior"
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold disabled:opacity-35 disabled:cursor-default transition-colors"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span>Anterior</span>
+                  </button>
+
+                  <div className="text-center leading-tight">
+                    <span className="block text-[11px] font-bold text-slate-200">
+                      Pág. {safePage} de {totalPages}
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      {startIndex + 1}–{endIndex} de {filteredCatalog.length}
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={safePage >= totalPages}
+                    onClick={() => goToPage(safePage + 1)}
+                    aria-label="Página siguiente"
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold disabled:opacity-35 disabled:cursor-default transition-colors"
+                  >
+                    <span>Siguiente</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
 
               {/* Panel Lateral de Sede y Sincronización para Escritorio (móvil usa la barra inferior) */}
               <div className="p-3 sm:p-4 rounded-xl bg-slate-900/40 border border-slate-800/80 text-xs text-slate-400 space-y-2.5 hidden lg:block">

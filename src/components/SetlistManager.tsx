@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useDeferredValue } from 'react';
 import {
   ListMusic,
   Plus,
@@ -112,11 +112,16 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
 
   const currentSetlist = savedSetlists.find(s => s.id === activeSetlistId);
   const effectiveListSedeId = currentSetlist?.sedeId || activeSedeId;
-  const selectableSongs = songs.filter(s => isSongVisibleInSede(s, effectiveListSedeId));
-  const { matches: matchingSongsToAdd, totalMatching: totalMatchingSongs } = filterAndSortSongsByTitle(
-    selectableSongs,
-    songSearchQuery,
-    30
+  const deferredSongSearchQuery = useDeferredValue(songSearchQuery);
+
+  const selectableSongs = useMemo(
+    () => songs.filter(s => isSongVisibleInSede(s, effectiveListSedeId)),
+    [songs, effectiveListSedeId]
+  );
+
+  const { matches: matchingSongsToAdd, totalMatching: totalMatchingSongs } = useMemo(
+    () => filterAndSortSongsByTitle(selectableSongs, deferredSongSearchQuery, 30),
+    [selectableSongs, deferredSongSearchQuery]
   );
 
   useEffect(() => {

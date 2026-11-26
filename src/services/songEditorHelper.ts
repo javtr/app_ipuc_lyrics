@@ -1,5 +1,6 @@
-import { BaseSong, SongSection } from '../types';
+import { BaseSong, DisplaySong, SedeSongOverride, SongSection } from '../types';
 import { getCleanLyrics } from './chordParser';
+import { isSongVisibleInSede, resolveSongForDisplay } from './songResolver';
 
 /**
  * Normaliza texto removiendo tildes/diacríticos y espacios extremos para búsquedas y slugs en español.
@@ -237,4 +238,114 @@ export function filterAndSortSongsByTitle(
 
   const combined = [...startsWithMatches, ...containsMatches];
   return { matches: combined.slice(0, limit), totalMatching: combined.length };
+}
+
+export const CATALOG_PAGE_SIZE = 30;
+
+export interface IndexedCatalogItem {
+  song: BaseSong;
+  resolvedItem: DisplaySong;
+  letter: string;
+  openingLine: string;
+  normTitle: string;
+  normLyrics: string;
+}
+
+/**
+ * Pre-indexa en memoria las canciones visibles de la sede activa con título, letra limpia
+ * y orden alfabético precalculados para filtrar en < 5 ms sin reprocesar ChordPro en cada tecla.
+ */
+export function buildIndexedCatalog(
+  songs: BaseSong[],
+  activeSedeId: string,
+  overrides: SedeSongOverride[],
+  sedeLabel: string
+): IndexedCatalogItem[] {
+  const sedeOverrideMap = new Map<string, SedeSongOverride>();
+  if (activeSedeId && activeSedeId !== 'general') {
+    for (const ov of overrides) {
+      if (ov.sedeId === activeSedeId) {
+        sedeOverrideMap.set(ov.baseSongId, ov);
+      }
+    }
+  }
+
+  const visible = songs
+    .filter(song => isSongVisibleInSede(song, activeSedeId))
+    .sort((a, b) => compareSongTitlesEs(a.title, b.title));
+
+  return visible.map(song => {
+    const ov = sedeOverrideMap.get(song.id);
+    const resolvedItem = ov
+      ? resolveSongForDisplay(song, activeSedeId, [ov], { sedeLabel })
+      : resolveSongForDisplay(song, activeSedeId, [], { sedeLabel });
+
+    const cleanLyrics = resolvedItem.sections
+      .flatMap(sec => getCleanLyrics(sec.lines))
+      .join(' ')
+      .replace(/\s+/g, ' ');
+
+    return {
+      song,
+      resolvedItem,
+      letter: getSongInitialLetter(song.title),
+      openingLine: getSongOpeningLine(resolvedItem.sections),
+      normTitle: normalizeSearchText(`${song.title} ${resolvedItem.title}`).replace(/\s+/g, ' '),
+      normLyrics: normalizeSearchText(cleanLyrics).replace(/\s+/g, ' ')
+    };
+  });
+}
+
+/**
+ * Filtra el índice precalculado priorizando coincidencias en el título sobre coincidencias en estrofas.
+ */
+export function filterIndexedCatalog(
+  indexedItems: IndexedCatalogItem[],
+  query: string
+): IndexedCatalogItem[] {
+  const normQuery = normalizeSearchText(query).replace(/\s+/g, ' ');
+  if (!normQuery) {
+    return indexedItems;
+  }
+
+  const titleMatches: IndexedCatalogItem[] = [];
+  const lyricsMatches: IndexedCatalogItem[] = [];
+
+  for (const item of indexedItems) {
+    if (item.normTitle.includes(normQuery)) {
+      titleMatches.push(item);
+    } else if (item.normLyrics.includes(normQuery)) {
+      lyricsMatches.push(item);
+    }
+  }
+
+  return [...titleMatches, ...lyricsMatches];
+}
+
+/**
+ * Pagina el catálogo filtrado a bloques de tamaño fijo (por defecto 30 canciones).
+ */
+export function paginateCatalogItems<T>(
+  items: T[],
+  requestedPage: number,
+  pageSize: number = CATALOG_PAGE_SIZE
+): {
+  pageItems: T[];
+  currentPage: number;
+  totalPages: number;
+  startIndex: number;
+  endIndex: number;
+} {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const currentPage = Math.min(Math.max(1, requestedPage), totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+  const pageItems = items.slice(startIndex, startIndex + pageSize);
+
+  return {
+    pageItems,
+    currentPage,
+    totalPages,
+    startIndex,
+    endIndex: startIndex + pageItems.length
+  };
 }
