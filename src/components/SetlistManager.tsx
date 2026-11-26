@@ -12,7 +12,9 @@ import {
   ExternalLink,
   HardDrive,
   Edit3,
-  AlertCircle
+  AlertCircle,
+  Search,
+  X
 } from 'lucide-react';
 import { BaseSong, SedeProfile, SedeSongOverride, Setlist, SetlistItem } from '../types';
 import {
@@ -21,6 +23,7 @@ import {
   generateWhatsAppLink
 } from '../services/urlSharing';
 import { resolveSongForDisplay, isSongVisibleInSede } from '../services/songResolver';
+import { filterAndSortSongsByTitle } from '../services/songEditorHelper';
 import { db } from '../db';
 
 export interface SetlistSelectionContext {
@@ -84,6 +87,7 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
   const [selectedKeyToAdd, setSelectedKeyToAdd] = useState<string>(
     initialSelectableSongs[0]?.originalKey || 'G'
   );
+  const [songSearchQuery, setSongSearchQuery] = useState('');
 
   const getSedeDisplayName = (sedeId: string) => {
     if (!sedeId || sedeId === 'general') return 'Catálogo General';
@@ -109,6 +113,11 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
   const currentSetlist = savedSetlists.find(s => s.id === activeSetlistId);
   const effectiveListSedeId = currentSetlist?.sedeId || activeSedeId;
   const selectableSongs = songs.filter(s => isSongVisibleInSede(s, effectiveListSedeId));
+  const { matches: matchingSongsToAdd, totalMatching: totalMatchingSongs } = filterAndSortSongsByTitle(
+    selectableSongs,
+    songSearchQuery,
+    30
+  );
 
   useEffect(() => {
     if (selectableSongs.length === 0) {
@@ -127,6 +136,7 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
   useEffect(() => {
     setIsRenamingSetlist(false);
     setCopyStatus('idle');
+    setSongSearchQuery('');
   }, [activeSetlistId]);
 
   const handleCreateSetlist = async (e: React.FormEvent) => {
@@ -167,20 +177,28 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
     onSetlistsUpdated();
   };
 
-  const handleAddSongToSetlist = async () => {
-    if (!currentSetlist || !selectedSongToAdd) return;
-    const song = songs.find(s => s.id === selectedSongToAdd);
+  const handleAddSongToSetlist = async (explicitSongId?: string, explicitKey?: string) => {
+    const targetSongId = explicitSongId || selectedSongToAdd;
+    if (!currentSetlist || !targetSongId) return;
+    const song = songs.find(s => s.id === targetSongId);
     if (!song) return;
 
     const fallbackKey = getResolvedSongKey(song, currentSetlist.sedeId);
+    const keyToUse =
+      explicitKey ??
+      (targetSongId === selectedSongToAdd && selectedKeyToAdd.trim()
+        ? selectedKeyToAdd.trim()
+        : fallbackKey);
+
     const newItem: SetlistItem = {
       songId: song.id,
-      key: selectedKeyToAdd.trim() || fallbackKey,
+      key: keyToUse,
       order: currentSetlist.items.length + 1
     };
 
     const updatedItems = [...currentSetlist.items, newItem];
     await db.setlists.update(currentSetlist.id, { items: updatedItems });
+    setSongSearchQuery('');
     onSetlistsUpdated();
   };
 
@@ -460,48 +478,111 @@ export const SetlistManager: React.FC<SetlistManagerProps> = ({
             )}
           </div>
 
-          {/* Formulario para Agregar Canción al Repertorio */}
-          <div className="pt-4 border-t border-slate-800">
-            <h4 className="text-xs font-semibold text-slate-300 mb-2">Agregar Canción al Culto</h4>
-            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
-              <select
-                value={selectedSongToAdd}
-                onChange={e => {
-                  setSelectedSongToAdd(e.target.value);
-                  const song = selectableSongs.find(s => s.id === e.target.value);
-                  if (song) {
-                    setSelectedKeyToAdd(getResolvedSongKey(song, currentSetlist.sedeId));
-                  }
-                }}
-                className="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500"
-              >
-                {selectableSongs.map(s => {
-                  const songKey = getResolvedSongKey(s, currentSetlist.sedeId);
-                  return (
-                    <option key={s.id} value={s.id}>
-                      {s.title} {isMusicianMode ? `(${songKey})` : ''}
-                    </option>
-                  );
-                })}
-              </select>
+          {/* Buscador para Agregar Canción al Repertorio */}
+          <div className="pt-4 border-t border-slate-800 space-y-2.5">
+            <h4 className="text-xs font-semibold text-slate-300">Agregar Canción al Culto</h4>
 
-              {isMusicianMode && (
-                <input
-                  type="text"
-                  placeholder="Tono"
-                  value={selectedKeyToAdd}
-                  onChange={e => setSelectedKeyToAdd(e.target.value)}
-                  className="w-20 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white text-center focus:outline-none focus:border-emerald-500"
-                />
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder={`Buscar por título entre ${selectableSongs.length} canción(es)...`}
+                value={songSearchQuery}
+                onChange={e => setSongSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-8 py-2 bg-slate-950 border border-slate-700 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+              />
+              {songSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSongSearchQuery('')}
+                  aria-label="Limpiar búsqueda de canción"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {isMusicianMode && selectedSongToAdd && (() => {
+              const chosenSong = selectableSongs.find(s => s.id === selectedSongToAdd);
+              if (!chosenSong) return null;
+              return (
+                <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 p-2.5 rounded-xl bg-slate-950/80 border border-emerald-800/40">
+                  <span className="flex-1 min-w-0 text-xs text-slate-300 truncate">
+                    Seleccionada: <strong className="text-white">{chosenSong.title}</strong>
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <label className="text-[11px] text-slate-400">Tono:</label>
+                    <input
+                      type="text"
+                      placeholder="Tono"
+                      value={selectedKeyToAdd}
+                      onChange={e => setSelectedKeyToAdd(e.target.value)}
+                      className="w-16 px-2 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white text-center focus:outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAddSongToSetlist(chosenSong.id, selectedKeyToAdd.trim() || getResolvedSongKey(chosenSong, currentSetlist.sedeId))}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition-colors"
+                    >
+                      Agregar
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/60 divide-y divide-slate-800/70">
+              {matchingSongsToAdd.map(s => {
+                const songKey = getResolvedSongKey(s, currentSetlist.sedeId);
+                const isChosen = s.id === selectedSongToAdd;
+                return (
+                  <div
+                    key={s.id}
+                    className={`flex items-center justify-between gap-2 px-3 py-2 transition-colors ${
+                      isChosen ? 'bg-emerald-950/30' : 'hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedSongToAdd(s.id);
+                        setSelectedKeyToAdd(songKey);
+                      }}
+                      className="flex-1 min-w-0 text-left flex items-center gap-2"
+                    >
+                      <span className="text-xs sm:text-sm font-medium text-slate-200 truncate">
+                        {s.title}
+                      </span>
+                      {isMusicianMode && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-semibold shrink-0">
+                          {songKey}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddSongToSetlist(s.id)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-[11px] font-semibold text-white shrink-0 transition-colors"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Agregar</span>
+                    </button>
+                  </div>
+                );
+              })}
+
+              {matchingSongsToAdd.length === 0 && (
+                <div className="py-5 text-center text-xs text-slate-500">
+                  No se encontraron canciones con ese título.
+                </div>
               )}
 
-              <button
-                onClick={handleAddSongToSetlist}
-                disabled={!selectedSongToAdd}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold transition-colors shrink-0 disabled:opacity-40"
-              >
-                Agregar
-              </button>
+              {totalMatchingSongs > matchingSongsToAdd.length && (
+                <div className="px-3 py-1.5 text-[11px] text-slate-400 bg-slate-900/60 text-center">
+                  Mostrando {matchingSongsToAdd.length} de {totalMatchingSongs} canciones — escribe el título para filtrar.
+                </div>
+              )}
             </div>
           </div>
         </div>

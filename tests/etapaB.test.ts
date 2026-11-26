@@ -736,4 +736,73 @@ describe('Etapa B: Cloudflare Pages Functions, JWT, Issues y Cola Offline', () =
       'El inicio de sesión no está disponible en modo local'
     );
   });
+
+  it('getJsonFile lee archivos mayores a 1 MB mediante /git/blobs/{sha} cuando GitHub omite content', async () => {
+    const token = await signJwt(
+      {
+        role: 'master',
+        sedeId: 'general',
+        branch: 'catalog',
+        iat: Date.now(),
+        exp: Date.now() + 60_000
+      },
+      testEnv.JWT_SECRET
+    );
+
+    const existingCatalog: BaseSong[] = [
+      {
+        id: 'himno-grande',
+        title: 'Himno Grande',
+        originalKey: 'C',
+        sections: [{ id: 'v1', type: 'verse', label: 'Verso 1', lines: ['Santo es el Señor'] }],
+        updatedAt: '2026-11-26T10:00:00.000Z'
+      }
+    ];
+
+    const putBodies: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const u = String(url);
+        if (u.includes('/contents/catalog.json') && (!init?.method || init.method === 'GET')) {
+          // Simula respuesta > 1 MB de GitHub Contents API (sin payload.content, solo sha)
+          return new Response(JSON.stringify({ sha: 'blob_sha_big_123' }), { status: 200 });
+        }
+        if (u.includes('/git/blobs/blob_sha_big_123')) {
+          return new Response(
+            JSON.stringify({ content: utf8ToBase64(JSON.stringify(existingCatalog)) }),
+            { status: 200 }
+          );
+        }
+        if (u.includes('/contents/catalog.json') && init?.method === 'PUT') {
+          putBodies.push(String(init.body));
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        }
+        return new Response(null, { status: 404 });
+      })
+    );
+
+    const commitRes = await commitPost({
+      request: new Request('https://app.pages.dev/api/commit', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          action: 'upsert_song',
+          targetSedeId: 'general',
+          song: {
+            id: 'canto-nuevo',
+            title: 'Canto Nuevo',
+            originalKey: 'G',
+            sections: [{ id: 'v1', type: 'verse', label: 'Verso 1', lines: ['Aleluya'] }],
+            updatedAt: '2026-11-26T16:00:00.000Z'
+          }
+        })
+      }),
+      env: testEnv
+    });
+
+    expect(commitRes.status).toBe(200);
+    expect(putBodies).toHaveLength(1);
+    expect(JSON.parse(putBodies[0]).sha).toBe('blob_sha_big_123');
+  });
 });

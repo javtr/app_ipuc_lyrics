@@ -96,11 +96,26 @@ export async function getJsonFile<T>(
   }
 
   const payload = (await res.json()) as { content?: string; sha?: string };
-  if (!payload.content || !payload.sha) {
+  if (!payload.sha) {
     throw new Error(`Respuesta incompleta de GitHub al leer ${filePath}`);
   }
 
-  const decoded = decodeBase64Utf8(payload.content);
+  let encodedContent = payload.content;
+  // GitHub /contents omite content cuando el archivo supera 1 MB; recurrir a Git Blobs API
+  if (!encodedContent) {
+    const blobRes = await githubFetch(env, `/git/blobs/${encodeURIComponent(payload.sha)}`);
+    if (!blobRes.ok) {
+      throw new Error(`Error al leer blob de ${filePath} en ${branch} (HTTP ${blobRes.status})`);
+    }
+    const blobPayload = (await blobRes.json()) as { content?: string };
+    encodedContent = blobPayload.content;
+  }
+
+  if (!encodedContent) {
+    throw new Error(`Respuesta incompleta de GitHub al leer ${filePath}`);
+  }
+
+  const decoded = decodeBase64Utf8(encodedContent);
   return {
     data: JSON.parse(decoded) as T,
     sha: payload.sha
@@ -148,7 +163,9 @@ export async function putJsonFile(
   sha: string | undefined,
   commitMessage: string
 ): Promise<void> {
-  const content = encodeBase64Utf8(`${JSON.stringify(data, null, 2)}\n`);
+  const pretty = `${JSON.stringify(data, null, 2)}\n`;
+  const serialized = pretty.length > 500_000 ? `${JSON.stringify(data)}\n` : pretty;
+  const content = encodeBase64Utf8(serialized);
   const res = await githubFetch(env, `/contents/${encodeRepoPath(filePath)}`, {
     method: 'PUT',
     body: JSON.stringify({

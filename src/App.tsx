@@ -17,7 +17,9 @@ import { resolveSongForDisplay, isSongVisibleInSede } from './services/songResol
 import { decompressSetlist } from './services/urlSharing';
 import { checkAndRequestStoragePersistence } from './services/backupService';
 import {
+  ALPHABET_LETTERS,
   getSongOpeningLine,
+  groupEntriesAlphabetically,
   matchesSongTitleOrLyrics
 } from './services/songEditorHelper';
 import {
@@ -85,6 +87,7 @@ export function App() {
   activeSedeRef.current = activeSedeId;
   const importTimerRef = useRef<number | null>(null);
   const lastAutoSyncMsRef = useRef<number>(0);
+  const letterSectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const toggleMusicianMode = () => {
     const nextMode = !isMusicianMode;
@@ -250,6 +253,19 @@ export function App() {
       matchesSongTitleOrLyrics(song, searchQuery, resolvedItem.sections, resolvedItem.title)
     );
 
+  const groupedCatalog = groupEntriesAlphabetically(catalogEntries, entry => entry.song.title);
+  const availableLetters = new Set(groupedCatalog.map(g => g.letter));
+  const indexLetters = availableLetters.has('#')
+    ? [...ALPHABET_LETTERS, '#']
+    : ALPHABET_LETTERS;
+
+  const scrollToLetter = (letter: string) => {
+    const target = letterSectionRefs.current[letter];
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
   // Resolución segura sin sustituciones silenciosas cuando una canción de repertorio falta offline
   const effectiveSedeId = songContextSedeId || activeSedeId;
   const canCreateInActiveSede = canSessionEditSede(adminSession, activeSedeId);
@@ -258,7 +274,9 @@ export function App() {
   const effectiveSongs = songs.filter(song => isSongVisibleInSede(song, effectiveSedeId));
   const foundSelectedSong = effectiveSongs.find(s => s.id === selectedSongId);
   const isMissingRequestedSong = Boolean(isExplicitSongSelection && songs.length > 0 && !foundSelectedSong);
-  const activeBaseSong = foundSelectedSong || (isExplicitSongSelection ? undefined : visibleSongs[0]);
+  const activeBaseSong =
+    foundSelectedSong ||
+    (isExplicitSongSelection ? undefined : groupedCatalog[0]?.items[0]?.song || visibleSongs[0]);
 
   const activeDisplaySong = activeBaseSong
     ? resolveSongForDisplay(activeBaseSong, activeSedeId, overrides, {
@@ -512,65 +530,112 @@ export function App() {
                 )}
               </div>
 
-              {/* Lista de Canciones */}
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-1.5 sm:p-2 space-y-1 lg:max-h-[calc(100vh-250px)] lg:overflow-y-auto">
-                {catalogEntries.map(({ song, resolvedItem }) => {
-                  const hasLocalOverride = resolvedItem.isLocalOverride;
-                  const isSedeExclusive = Boolean(song.sedeId && song.sedeId !== 'general');
-                  const showSedeBadge = hasLocalOverride || isSedeExclusive;
-                  const openingLine = getSongOpeningLine(resolvedItem.sections);
-                  const isSelected = activeBaseSong ? song.id === activeBaseSong.id : false;
+              {/* Índice Alfabético Rápido (1 fila compacta deslizable) */}
+              {groupedCatalog.length > 1 && (
+                <div
+                  aria-label="Índice alfabético de canciones"
+                  className="flex items-center gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                >
+                  {indexLetters.map(letter => {
+                    const hasSongs = availableLetters.has(letter);
+                    return (
+                      <button
+                        key={letter}
+                        type="button"
+                        disabled={!hasSongs}
+                        onClick={() => scrollToLetter(letter)}
+                        title={hasSongs ? `Ir a la letra ${letter}` : `Sin canciones por ${letter}`}
+                        className={`w-6 h-6 rounded-lg text-[11px] font-bold shrink-0 flex items-center justify-center transition-colors ${
+                          hasSongs
+                            ? 'bg-slate-900 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-slate-800'
+                            : 'text-slate-600/40 cursor-default'
+                        }`}
+                      >
+                        {letter}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
-                  return (
-                    <div
-                      key={song.id}
-                      onClick={() => {
-                        setSelectedSongId(song.id);
-                        setIsExplicitSongSelection(true);
-                        setSongContextSedeId(null);
-                        setSelectedItemKey(null);
-                        setSetlistNavContext(null);
-                        setMobileView('detail');
-                      }}
-                      className={`group p-3 rounded-xl cursor-pointer transition-all flex items-center justify-between active:scale-[0.99] ${
-                        isSelected
-                          ? 'bg-slate-800 border border-emerald-600/40 text-white shadow-md'
-                          : 'hover:bg-slate-800/80 text-slate-300 hover:text-white'
-                      }`}
-                    >
-                      <div className="flex-1 min-w-0 pr-2">
-                        <div className="flex items-center gap-1.5">
-                          <h4 className="text-sm font-semibold truncate">{song.title}</h4>
-                          {showSedeBadge && (
-                            <span
-                              title="Versión o canción exclusiva de esta sede"
-                              className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"
-                            />
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-400 truncate mt-0.5">
-                          {openingLine || 'Sin letra registrada'}
-                        </p>
-                      </div>
-
-                      {(isMusicianMode || showSedeBadge) && (
-                        <div className="flex items-center gap-1 shrink-0">
-                          {isMusicianMode && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-bold">
-                              {resolvedItem.key}
-                            </span>
-                          )}
-
-                          {showSedeBadge && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-medium">
-                              Sede
-                            </span>
-                          )}
-                        </div>
-                      )}
+              {/* Lista de Canciones Agrupada Alfabéticamente */}
+              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-1.5 sm:p-2 space-y-2 lg:max-h-[calc(100vh-285px)] lg:overflow-y-auto">
+                {groupedCatalog.map(group => (
+                  <div
+                    key={group.letter}
+                    ref={el => {
+                      letterSectionRefs.current[group.letter] = el;
+                    }}
+                    className="space-y-1 scroll-mt-2"
+                  >
+                    <div className="sticky top-0 z-10 px-2.5 py-1 rounded-lg bg-slate-950/90 backdrop-blur-sm border-b border-slate-800/80 flex items-center justify-between">
+                      <span className="text-xs font-extrabold text-emerald-400 tracking-wide">
+                        {group.letter}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-medium">
+                        {group.items.length}
+                      </span>
                     </div>
-                  );
-                })}
+
+                    {group.items.map(({ song, resolvedItem }) => {
+                      const hasLocalOverride = resolvedItem.isLocalOverride;
+                      const isSedeExclusive = Boolean(song.sedeId && song.sedeId !== 'general');
+                      const showSedeBadge = hasLocalOverride || isSedeExclusive;
+                      const openingLine = getSongOpeningLine(resolvedItem.sections);
+                      const isSelected = activeBaseSong ? song.id === activeBaseSong.id : false;
+
+                      return (
+                        <div
+                          key={song.id}
+                          onClick={() => {
+                            setSelectedSongId(song.id);
+                            setIsExplicitSongSelection(true);
+                            setSongContextSedeId(null);
+                            setSelectedItemKey(null);
+                            setSetlistNavContext(null);
+                            setMobileView('detail');
+                          }}
+                          className={`group p-3 rounded-xl cursor-pointer transition-all flex items-center justify-between active:scale-[0.99] ${
+                            isSelected
+                              ? 'bg-slate-800 border border-emerald-600/40 text-white shadow-md'
+                              : 'hover:bg-slate-800/80 text-slate-300 hover:text-white'
+                          }`}
+                        >
+                          <div className="flex-1 min-w-0 pr-2">
+                            <div className="flex items-center gap-1.5">
+                              <h4 className="text-sm font-semibold truncate">{song.title}</h4>
+                              {showSedeBadge && (
+                                <span
+                                  title="Versión o canción exclusiva de esta sede"
+                                  className="w-2 h-2 rounded-full bg-emerald-400 shrink-0"
+                                />
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-400 truncate mt-0.5">
+                              {openingLine || 'Sin letra registrada'}
+                            </p>
+                          </div>
+
+                          {(isMusicianMode || showSedeBadge) && (
+                            <div className="flex items-center gap-1 shrink-0">
+                              {isMusicianMode && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-bold">
+                                  {resolvedItem.key}
+                                </span>
+                              )}
+
+                              {showSedeBadge && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-medium">
+                                  Sede
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
 
                 {catalogEntries.length === 0 && (
                   <div className="py-8 text-center text-xs text-slate-500">

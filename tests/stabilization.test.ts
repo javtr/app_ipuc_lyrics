@@ -11,8 +11,11 @@ import {
 import { parseTextToSections } from '../src/services/chordSerializer';
 import {
   buildOverrideTitle,
+  filterAndSortSongsByTitle,
   generateUniqueSongSlug,
+  getSongInitialLetter,
   getSongOpeningLine,
+  groupEntriesAlphabetically,
   hasChordAnnotations,
   matchesSongTitleOrLyrics,
   normalizeSearchText,
@@ -630,5 +633,74 @@ describe('Estabilización y Regresión: Validación + Nuevos Hallazgos + Correcc
     );
     expect(setlistHtml).toContain('Repertorios');
     expect(setlistHtml).toContain('Nuevo');
+  });
+
+  it('[UX6] ordena y agrupa canciones alfabéticamente (con tildes y signos) y reemplaza el select de repertorios por buscador', () => {
+    expect(getSongInitialLetter('¡Cuán Grande Es Él!')).toBe('C');
+    expect(getSongInitialLetter('Ángel del Señor')).toBe('A');
+    expect(getSongInitialLetter('10000 Razones')).toBe('#');
+
+    const songsSample: BaseSong[] = [
+      { ...baseSong, id: 's1', title: 'Sublime Gracia' },
+      { ...baseSong, id: 's2', title: '¡Alabadle!' },
+      { ...baseSong, id: 's3', title: 'Ángel de Luz' },
+      { ...baseSong, id: 's4', title: 'Cuan Bello es el Señor' },
+      { ...baseSong, id: 's5', title: '100 Razones' }
+    ];
+
+    const grouped = groupEntriesAlphabetically(songsSample, s => s.title);
+    expect(grouped.map(g => g.letter)).toEqual(['A', 'C', 'S', '#']);
+    expect(grouped[0].items.map(s => s.title)).toEqual(['¡Alabadle!', 'Ángel de Luz']);
+
+    const { matches, totalMatching } = filterAndSortSongsByTitle(songsSample, 'cuan', 2);
+    expect(totalMatching).toBe(1);
+    expect(matches[0].id).toBe('s4');
+
+    const { matches: limited, totalMatching: totalAll } = filterAndSortSongsByTitle(songsSample, '', 3);
+    expect(totalAll).toBe(5);
+    expect(limited).toHaveLength(3);
+
+    // SetlistManager usa buscador por título y botón Agregar sin <select>
+    const setlist: Setlist = {
+      id: 'setlist_buscador',
+      name: 'Culto Prueba',
+      date: '2026-11-26',
+      sedeId: 'general',
+      items: [],
+      createdAt: '2026-11-26T15:00:00.000Z'
+    };
+
+    const setlistHtml = renderToStaticMarkup(
+      React.createElement(SetlistManager, {
+        songs: songsSample,
+        activeSedeId: 'general',
+        savedSetlists: [setlist],
+        isMusicianMode: true,
+        onSelectSong: vi.fn(),
+        onSetlistsUpdated: vi.fn()
+      })
+    );
+
+    expect(setlistHtml).toContain('Buscar por título entre 5 canción(es)...');
+    expect(setlistHtml).toContain('Cuan Bello es el Señor');
+    expect(setlistHtml).toContain('¡Alabadle!');
+    expect(setlistHtml).not.toContain('<select');
+
+    const manySongs: BaseSong[] = Array.from({ length: 35 }, (_, idx) => ({
+      ...baseSong,
+      id: `song-${idx + 1}`,
+      title: `Canto ${String(idx + 1).padStart(2, '0')}`
+    }));
+    const manyHtml = renderToStaticMarkup(
+      React.createElement(SetlistManager, {
+        songs: manySongs,
+        activeSedeId: 'general',
+        savedSetlists: [setlist],
+        isMusicianMode: false,
+        onSelectSong: vi.fn(),
+        onSetlistsUpdated: vi.fn()
+      })
+    );
+    expect(manyHtml).toContain('Mostrando 30 de 35 canciones');
   });
 });

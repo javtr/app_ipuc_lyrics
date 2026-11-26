@@ -155,3 +155,86 @@ export function matchesSongTitleOrLyrics(
 
   return normalizeSearchText(allCleanLyrics).includes(normalizedQuery);
 }
+
+export const ALPHABET_LETTERS: string[] = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+/**
+ * Extrae la letra inicial alfabética (A-Z) ignorando tildes y signos iniciales (¡, ¿, ");
+ * si inicia con dígito o símbolo devuelve '#'.
+ */
+export function getSongInitialLetter(title: string): string {
+  const normalized = normalizeSearchText(title).replace(/^[^a-z0-9]+/i, '');
+  const first = normalized.charAt(0).toUpperCase();
+  return first >= 'A' && first <= 'Z' ? first : '#';
+}
+
+/**
+ * Compara títulos alfabéticamente en español ignorando signos iniciales de apertura.
+ */
+export function compareSongTitlesEs(titleA: string, titleB: string): number {
+  const cleanA = titleA.replace(/^[¡¿"'(\s]+/, '');
+  const cleanB = titleB.replace(/^[¡¿"'(\s]+/, '');
+  return cleanA.localeCompare(cleanB, 'es', { sensitivity: 'base' });
+}
+
+export interface AlphabeticalGroup<T> {
+  letter: string;
+  items: T[];
+}
+
+/**
+ * Ordena alfabéticamente por título y agrupa en secciones por letra inicial ('A'..'Z', '#').
+ */
+export function groupEntriesAlphabetically<T>(
+  entries: T[],
+  getTitle: (entry: T) => string
+): AlphabeticalGroup<T>[] {
+  const sorted = [...entries].sort((a, b) => compareSongTitlesEs(getTitle(a), getTitle(b)));
+  const buckets = new Map<string, T[]>();
+
+  for (const entry of sorted) {
+    const letter = getSongInitialLetter(getTitle(entry));
+    const groupItems = buckets.get(letter) || [];
+    groupItems.push(entry);
+    buckets.set(letter, groupItems);
+  }
+
+  const orderedEntries = Array.from(buckets.entries()).sort(([a], [b]) => {
+    if (a === '#') return 1;
+    if (b === '#') return -1;
+    return a.localeCompare(b);
+  });
+
+  return orderedEntries.map(([letter, items]) => ({ letter, items }));
+}
+
+/**
+ * Filtra y ordena canciones por título para el buscador de Repertorios (prefijo antes que coincidencia parcial).
+ */
+export function filterAndSortSongsByTitle(
+  songs: BaseSong[],
+  query: string,
+  limit: number = 30
+): { matches: BaseSong[]; totalMatching: number } {
+  const normalizedQuery = normalizeSearchText(query).replace(/\s+/g, ' ');
+  const sorted = [...songs].sort((a, b) => compareSongTitlesEs(a.title, b.title));
+
+  if (!normalizedQuery) {
+    return { matches: sorted.slice(0, limit), totalMatching: sorted.length };
+  }
+
+  const startsWithMatches: BaseSong[] = [];
+  const containsMatches: BaseSong[] = [];
+
+  for (const song of sorted) {
+    const normTitle = normalizeSearchText(song.title).replace(/\s+/g, ' ');
+    if (normTitle.startsWith(normalizedQuery)) {
+      startsWithMatches.push(song);
+    } else if (normTitle.includes(normalizedQuery)) {
+      containsMatches.push(song);
+    }
+  }
+
+  const combined = [...startsWithMatches, ...containsMatches];
+  return { matches: combined.slice(0, limit), totalMatching: combined.length };
+}
