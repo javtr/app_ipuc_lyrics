@@ -133,7 +133,7 @@
     "id": "adoremos-a-rey_sede-palestina",
     "baseSongId": "adoremos-a-rey",
     "sedeId": "sede-palestina",
-    "customTitle": "Adoremos al rey.",
+    "customTitle": "Adoremos al rey - Aquí esta el poderoso",
     "customKey": "C",
     "customSections": [
       {
@@ -162,7 +162,7 @@
         ]
       }
     ],
-    "updatedAt": "2026-11-26T22:28:47.435Z",
+    "updatedAt": "2026-11-26T22:29:56.454Z",
     "syncSource": "remote"
   }
 ]
