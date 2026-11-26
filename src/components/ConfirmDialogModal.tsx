@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, RotateCcw, Trash2, X } from 'lucide-react';
+import { AlertTriangle, RotateCcw, Star, Trash2, X } from 'lucide-react';
 
 interface ConfirmDialogModalProps {
   isOpen: boolean;
@@ -8,7 +8,7 @@ interface ConfirmDialogModalProps {
   message: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  variant?: 'danger' | 'warning';
+  variant?: 'danger' | 'warning' | 'favorite';
   isProcessing?: boolean;
   onCancel: () => void;
   onConfirm: () => void | Promise<void>;
@@ -43,6 +43,7 @@ export const ConfirmDialogModal: React.FC<ConfirmDialogModalProps> = ({
   if (!isOpen) return null;
 
   const isDanger = variant === 'danger';
+  const isFavorite = variant === 'favorite';
 
   const modalNode = (
     <div
@@ -67,7 +68,13 @@ export const ConfirmDialogModal: React.FC<ConfirmDialogModalProps> = ({
                   : 'bg-amber-950/60 border-amber-700/60 text-amber-400'
               }`}
             >
-              {isDanger ? <Trash2 className="w-5 h-5" /> : <RotateCcw className="w-5 h-5" />}
+              {isDanger ? (
+                <Trash2 className="w-5 h-5" />
+              ) : isFavorite ? (
+                <Star className="w-5 h-5 fill-amber-400 text-amber-400" />
+              ) : (
+                <RotateCcw className="w-5 h-5" />
+              )}
             </div>
             <h3 id="confirm-dialog-title" className="text-base font-bold text-white leading-snug">
               {title}
@@ -85,11 +92,13 @@ export const ConfirmDialogModal: React.FC<ConfirmDialogModalProps> = ({
         </div>
 
         <p className="text-xs sm:text-sm text-slate-300 leading-relaxed flex items-start gap-2">
-          <AlertTriangle
-            className={`w-4 h-4 shrink-0 mt-0.5 ${
-              isDanger ? 'text-rose-400' : 'text-amber-400'
-            }`}
-          />
+          {!isFavorite && (
+            <AlertTriangle
+              className={`w-4 h-4 shrink-0 mt-0.5 ${
+                isDanger ? 'text-rose-400' : 'text-amber-400'
+              }`}
+            />
+          )}
           <span>{message}</span>
         </p>
 
@@ -106,10 +115,12 @@ export const ConfirmDialogModal: React.FC<ConfirmDialogModalProps> = ({
             type="button"
             disabled={isProcessing}
             onClick={onConfirm}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold text-white disabled:opacity-50 transition-colors ${
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold disabled:opacity-50 transition-colors ${
               isDanger
-                ? 'bg-rose-600 hover:bg-rose-500'
-                : 'bg-amber-600 hover:bg-amber-500'
+                ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                : isFavorite
+                  ? 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                  : 'bg-amber-600 hover:bg-amber-500 text-white'
             }`}
           >
             {isProcessing ? 'Procesando...' : confirmLabel}

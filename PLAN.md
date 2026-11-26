@@ -1,93 +1,199 @@
-# Plan de Desarrollo — Extractor Local desde Generación Pentecostal (`wp-json`) con Deduplicación contra el Catálogo Actual
+# Plan de Desarrollo — Canciones Favoritas Locales (Offline-First y sin Requiere Sesión)
 
-> **Estado:** Fase 1 (Discusión y Planificación en Modo Solo Lectura — Esperando aprobación expresa del usuario antes de crear el script y `.bat` en `herramientas_locales/`).
-
----
-
-## 1. Análisis de Viabilidad Confirmado
-
-Se inspeccionó `https://www.generacionpentecostal.com/letras-de-canciones/` en modo solo lectura y se confirmó que es **100% viable**:
-
-1. **Sin CAPTCHA ni bloqueos anti-bot:** responde `HTTP 200 OK` directamente.
-2. **WordPress REST API oficial disponible (`/wp-json/wp/v2/posts`):**
-   - La categoría **`Letras`** (`categories=127`) expone **3,047 canciones** estructuradas en JSON (`title.rendered`, `content.rendered`, `slug`, `link`, `modified`).
-   - Usando paginación `per_page=100` (leyendo `X-WP-TotalPages` dinámicamente, ~31 peticiones en total), el script descarga las ~3,047 letras en pocos segundos con pausas respetuosas entre páginas (sin necesidad de abrir miles de URLs HTML individuales).
-3. **Estructura predecible de títulos y letras:**
-   - **Títulos:** siguen patrones como `"Letra Santo es el que vive de Montesanto"` o `"SUELTO – Letra de la canción de Sarai Rivera"`, permitiendo extraer limpiamente tanto el **título** como el **artista**.
-   - **Letras (`content.rendered`):** organizadas en bloques `<p>...</p>` con `<br />` entre líneas, más bloques finales promocionales (`"Suscríbete a nuestro Canal de Youtube"`, `<script>`, `<iframe>`) que se descartan automáticamente.
+> **Estado:** Fase 1 (Discusión y Planificación en Modo Solo Lectura — Esperando aprobación expresa del usuario antes de modificar `src/` o `tests/`).
 
 ---
 
-## 2. Objetivo Técnico
+## 1. Objetivo Técnico
 
-Crear un segundo utilitario estrictamente local dentro de `herramientas_locales/` (ya excluida en [`.gitignore`](file:///f:/Desarrollo/app_lyrics/.gitignore#L14) para que nunca se suba a GitHub ni a Cloudflare Pages):
+Permitir que cualquier usuario (esté o no autenticado) guarde y consulte **canciones favoritas localmente en su dispositivo**, respetando la experiencia móvil/iPhone y el flujo visual actual:
 
-1. **Script extractor (`herramientas_locales/importar_generacion_pentecostal.py`):**
-   - Consultar `/wp-json/wp/v2/posts?categories=127` página por página con reintentos suaves y pausa entre peticiones (`0.3 s`).
-   - Limpiar entidades HTML (`&#8211;`, `&nbsp;`, etc.), extraer título limpio y artista cuando venga indicado (`" de <Artista>"` / `"Letra de la canción de <Artista>"`), eliminar nodos `<script>`, `<style>`, `<iframe>` y párrafos promocionales (`"Suscríbete"`, `"Canal de Youtube"`, enlaces externos, etc.).
-   - Convertir cada párrafo `<p>` en secciones válidas de `BaseSong` (`Verso 1..N`, y `Coro` si un encabezado explícito dice `Coro:` / `CORO`).
-   - **Contraste doble contra el catálogo existente** (leyendo `--existing` desde `herramientas_locales/salida/catalog.json` o `origin/catalog:catalog.json`):
-     1. Coincidencia por **título normalizado** (sin tildes, signos iniciales ni sufijo de artista).
-     2. Coincidencia por **huella de inicio de letra** (primeras 2 líneas limpias normalizadas de ≥ 20 caracteres), para evitar duplicados aunque el título varíe ligeramente.
-   - Generar:
-     - `herramientas_locales/salida/nuevas_generacion_pentecostal.json` (solo las canciones nuevas detectadas, para inspección).
-     - `herramientas_locales/salida/catalog.json` (catálogo consolidado listo para subir: canciones existentes protegidas + nuevas canciones añadidas, con IDs slug únicos y formato JSON compacto).
-     - `herramientas_locales/salida/resumen_generacion_pentecostal.txt` (estadísticas de descarga, descartes, duplicados detectados y total final).
-2. **Lanzador interactivo (`herramientas_locales/Importar Web Generacion Pentecostal.bat`):**
-   - Permite ejecutar el proceso con doble clic, pregunta opcionalmente la ruta del `catalog.json` base (Enter para usar `herramientas_locales\salida\catalog.json` o `origin/catalog:catalog.json`) y muestra el resumen al finalizar.
+1. **Persistencia local reactiva en IndexedDB (`Dexie v3`):**
+   - Añadir la tabla `favorites: 'songId, addedAt'` en [`src/db/index.ts`](file:///f:/Desarrollo/app_lyrics/src/db/index.ts) (conservando intactas `version(1)` y `version(2)` para cero pérdida de datos) y el tipo `FavoriteSong` en [`src/types/index.ts`](file:///f:/Desarrollo/app_lyrics/src/types/index.ts).
+   - Al ser 100% local en el navegador/PWA, no requiere contraseña, no consume cuota en la nube y funciona con o sin internet.
+2. **Botón de Estrella + Ventana de Confirmación dentro de la Canción (`ReaderView` y `MusicianView`):**
+   - En la barra superior de herramientas de [`ReaderView.tsx`](file:///f:/Desarrollo/app_lyrics/src/components/ReaderView.tsx#L101-L125) (junto a `Proyección` y `Editar`) y [`MusicianView.tsx`](file:///f:/Desarrollo/app_lyrics/src/components/MusicianView.tsx#L118-L157) (junto a `WakeLock`, `Proyección` y `Editar`), agregar un botón con el ícono de estrella (`<Star />`):
+     - Vacía si aún no es favorita (`title="Agregar a favoritos"`).
+     - Rellena en tono ámbar/dorado si ya está guardada (`title="Quitar de favoritos"`).
+   - Al tocar la estrella, se despliega [`ConfirmDialogModal`](file:///f:/Desarrollo/app_lyrics/src/components/ConfirmDialogModal.tsx) (compatible 100% con iPhone Safari/PWA):
+     - Si no es favorita: *"Agregar a favoritos"* — `"¿Agregar \"<Título>\" a tus canciones favoritas en este dispositivo?"` con botones **`Cancelar`** y **`Aceptar`**.
+     - Si ya es favorita: *"Quitar de favoritos"* — `"¿Quitar \"<Título>\" de tus canciones favoritas en este dispositivo?"` con botones **`Cancelar`** y **`Aceptar`**.
+3. **Acceso rápido de Favoritas a la izquierda de la letra `A` (`src/App.tsx`):**
+   - En la barra del índice alfabético debajo del buscador ([`src/App.tsx`](file:///f:/Desarrollo/app_lyrics/src/App.tsx#L605-L635)), colocar **como primera opción a la izquierda de la letra `A`** el botón con ícono de **Estrella (`★`)**.
+   - Al tocar esa estrella, se activa/desactiva el filtro **`showFavoritesOnly`** (reiniciando a página `1`):
+     - Muestra exclusivamente las canciones guardadas en Favoritos (compatible con búsqueda por título/letra, índice `A–Z` y paginación de 30 en 30).
+     - Si aún no hay favoritas guardadas, muestra un mensaje guía amigable con botón para volver a ver todo el catálogo.
+     - En cada tarjeta del catálogo general, si la canción es favorita, mostrar una estrellita dorada discreta junto al título.
 
 ---
 
-## 3. Pseudocódigo y Flujo Lógico
+## 2. Pseudocódigo y Flujo Lógico
 
-```python
-# 1. Cargar catálogo base existente (para proteger canciones y evitar duplicados)
-existing_songs = load_existing_catalog(existing_path_or_git_origin_catalog)
-title_index = { normalize_title_key(s["title"]): s for s in existing_songs }
-lyrics_fp_index = { build_lyrics_fingerprint(s["sections"]): s for s in existing_songs }
+### A. Modelo y Base de Datos Local (`src/types/index.ts`, `src/db/index.ts`)
 
-# 2. Paginar WP REST API categoría 127 ("Letras")
-page = 1
-while True:
-    posts, total_pages = fetch_wp_posts(category_id=127, page=page, per_page=100)
-    for post in posts:
-        title, artist = extract_clean_title_and_artist(post["title"]["rendered"])
-        blocks = extract_clean_html_blocks(post["content"]["rendered"])
-        # Descartar scripts, iframes y líneas promocionales ("Suscríbete", "Canal de Youtube", etc.)
-        sections = blocks_to_sections(blocks)
-        if not title or not sections:
-            skipped += 1
-            continue
+```ts
+// En src/types/index.ts:
+export interface FavoriteSong {
+  songId: string;
+  addedAt: string;
+}
 
-        tkey = normalize_title_key(title)
-        lfp = build_lyrics_fingerprint(sections)
-        if tkey in title_index or (lfp and lfp in lyrics_fp_index):
-            duplicates += 1
-            # Opcionalmente enriquecer artist/tag si faltaba en el registro nuevo sin pisar acordes
-            continue
+// En src/db/index.ts (LyricsDatabase):
+favorites!: Table<FavoriteSong, string>;
 
-        new_song = build_base_song(title=title, artist=artist, sections=sections, tags=["Generación Pentecostal"])
-        new_songs.append(new_song)
-        title_index[tkey] = new_song
-        if lfp:
-            lyrics_fp_index[lfp] = new_song
+this.version(3).stores({
+  songs: 'id, title, originalKey, updatedAt',
+  overrides: 'id, baseSongId, sedeId, [baseSongId+sedeId]',
+  setlists: 'id, name, date, sedeId',
+  suggestions: 'id, songId, createdAt',
+  pendingSync: 'id, targetSedeId, createdAt',
+  favorites: 'songId, addedAt'
+});
+```
 
-    if page >= total_pages:
-        break
-    page += 1
-    time.sleep(0.3)
+### B. Variante `favorite` en `ConfirmDialogModal.tsx`
 
-# 3. Exportar nuevas_generacion_pentecostal.json + catalog.json consolidado compacto + resumen
+```tsx
+variant?: 'danger' | 'warning' | 'favorite';
+
+// Si variant === 'favorite':
+// - Icono en cabecera: <Star className="w-5 h-5 fill-amber-400 text-amber-400" />
+// - Botón confirmar: estilo dorado/esmeralda amigable (text-slate-950 bg-amber-400 hover:bg-amber-300)
+// - Sin icono de advertencia <AlertTriangle /> en el cuerpo del mensaje
+```
+
+### C. Botón Estrella en `ReaderView.tsx` y `MusicianView.tsx`
+
+```tsx
+interface ReaderViewProps / MusicianViewProps {
+  ...
+  isFavorite?: boolean;
+  onToggleFavorite?: () => void;
+}
+
+// En el grupo derecho de la barra superior de herramientas:
+{onToggleFavorite && (
+  <button
+    type="button"
+    onClick={onToggleFavorite}
+    title={isFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+    aria-label={isFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+    className={isFavorite
+      ? 'p-1.5 sm:p-2 bg-amber-950/60 border border-amber-500/60 text-amber-400 rounded-xl'
+      : 'p-1.5 sm:p-2 bg-slate-950 border border-slate-700 text-slate-300 hover:text-amber-300 rounded-xl'
+    }
+  >
+    <Star className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isFavorite ? 'fill-amber-400 text-amber-400' : ''}`} />
+  </button>
+)}
+```
+
+### D. Filtro de Favoritas y Confirmación en `src/App.tsx`
+
+```tsx
+const favorites = useLiveQuery(() => db.favorites.toArray()) || [];
+const favoriteIds = useMemo(() => new Set(favorites.map(f => f.songId)), [favorites]);
+const [showFavoritesOnly, setShowFavoritesOnly] = useState<boolean>(false);
+const [favoriteConfirmSong, setFavoriteConfirmSong] = useState<{
+  id: string;
+  title: string;
+  isCurrentlyFavorite: boolean;
+} | null>(null);
+
+// Filtrado base antes de buscar/paginar:
+const baseCatalogPool = useMemo(() => {
+  if (!showFavoritesOnly) return indexedCatalog;
+  return indexedCatalog.filter(item => favoriteIds.has(item.song.id));
+}, [indexedCatalog, showFavoritesOnly, favoriteIds]);
+
+const filteredCatalog = useMemo(
+  () => filterIndexedCatalog(baseCatalogPool, deferredSearchQuery),
+  [baseCatalogPool, deferredSearchQuery]
+);
+
+// En useEffect al cambiar deferredSearchQuery, activeSedeId o showFavoritesOnly:
+setCurrentPage(1);
+setPendingJumpLetter(null);
+
+// En barra del índice alfabético (si indexedCatalog.length > 0 || showFavoritesOnly):
+// Primer elemento a la izquierda de la 'A':
+<button
+  type="button"
+  onClick={() => setShowFavoritesOnly(prev => !prev)}
+  aria-pressed={showFavoritesOnly}
+  aria-label={showFavoritesOnly ? 'Ver todas las canciones' : 'Ver canciones favoritas'}
+  title={showFavoritesOnly ? 'Mostrando favoritas (toca para ver todas)' : `Ver favoritas (${favoriteIds.size})`}
+  className={showFavoritesOnly ? 'dorado activo' : 'oscuro con estrella'}
+>
+  <Star ... />
+</button>
+// Seguido inmediatamente de las letras 'A'..'Z'
+
+// Confirmar agregar/quitar favorito:
+const handleConfirmFavoriteToggle = async () => {
+  if (!favoriteConfirmSong) return;
+  if (favoriteConfirmSong.isCurrentlyFavorite) {
+    await db.favorites.delete(favoriteConfirmSong.id);
+  } else {
+    await db.favorites.put({
+      songId: favoriteConfirmSong.id,
+      addedAt: new Date().toISOString()
+    });
+  }
+  setFavoriteConfirmSong(null);
+};
+
+<ConfirmDialogModal
+  isOpen={Boolean(favoriteConfirmSong)}
+  title={favoriteConfirmSong?.isCurrentlyFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+  message={
+    favoriteConfirmSong?.isCurrentlyFavorite
+      ? `¿Quitar "${favoriteConfirmSong.title}" de tus canciones favoritas en este dispositivo?`
+      : `¿Agregar "${favoriteConfirmSong?.title || ''}" a tus canciones favoritas en este dispositivo?`
+  }
+  confirmLabel="Aceptar"
+  cancelLabel="Cancelar"
+  variant="favorite"
+  onCancel={() => setFavoriteConfirmSong(null)}
+  onConfirm={handleConfirmFavoriteToggle}
+/>
 ```
 
 ---
 
-## 4. Impacto y Ubicación Exacta
+## 3. Impacto (Archivos, Clases y Métodos Afectados)
 
-| Archivo | Propósito | Alcance |
+| Archivo | Elemento | Cambio |
 | :--- | :--- | :--- |
-| `herramientas_locales/importar_generacion_pentecostal.py` | Script extractor WP REST API + deduplicación doble | Solo local (ignorado por Git en `.gitignore`). |
-| `herramientas_locales/Importar Web Generacion Pentecostal.bat` | Lanzador Windows con doble clic | Solo local (ignorado por Git en `.gitignore`). |
-| `herramientas_locales/salida/nuevas_generacion_pentecostal.json` | Canciones nuevas extraídas sin duplicar | Generado al ejecutar. |
-| `herramientas_locales/salida/catalog.json` | Catálogo consolidado listo para subir a rama `catalog` | Generado al ejecutar. |
-| `herramientas_locales/salida/resumen_generacion_pentecostal.txt` | Reporte exacto de extracción y duplicados | Generado al ejecutar. |
+| `src/types/index.ts` | `FavoriteSong` | Nuevo tipo para el registro local de favoritos. |
+| `src/db/index.ts` | `LyricsDatabase` | Añadir `version(3)` con tabla `favorites: 'songId, addedAt'`. |
+| `src/components/ConfirmDialogModal.tsx` | `ConfirmDialogModal` | Añadir `variant?: 'danger' \| 'warning' \| 'favorite'` con ícono `<Star />` y botón de aceptación limpio. |
+| `src/components/ReaderView.tsx` | `ReaderView` | Añadir props `isFavorite`, `onToggleFavorite` y botón `<Star />` en la barra superior de la canción. |
+| `src/components/MusicianView.tsx` | `MusicianView` | Añadir props `isFavorite`, `onToggleFavorite` y botón `<Star />` en la barra superior de la canción. |
+| `src/App.tsx` | `App` | Suscripción reactiva `db.favorites`, filtro `showFavoritesOnly`, botón `<Star />` a la izquierda de `A`, estrellita en tarjetas favoritas, y `<ConfirmDialogModal />` (`Aceptar` / `Cancelar`). |
+| `tests/stabilization.test.ts` | Suite de estabilización | Pruebas unitarias para botón estrella en `ReaderView` y `MusicianView` (marcada vs vacía) y variante `'favorite'` en `ConfirmDialogModal`. |
+
+---
+
+## 4. Ubicación Exacta de Modificaciones
+
+1. **[`src/types/index.ts`](file:///f:/Desarrollo/app_lyrics/src/types/index.ts#L114-L122):**
+   - Al final del archivo (después de línea 122), exportar `interface FavoriteSong { songId: string; addedAt: string; }`.
+2. **[`src/db/index.ts`](file:///f:/Desarrollo/app_lyrics/src/db/index.ts#L1-L36):**
+   - Líneas 1–17: importar `FavoriteSong` y declarar `favorites!: Table<FavoriteSong, string>;` en `LyricsDatabase`.
+   - Después de la línea 32 (`this.version(2)`): añadir `this.version(3).stores({ ..., favorites: 'songId, addedAt' });`.
+3. **[`src/components/ConfirmDialogModal.tsx`](file:///f:/Desarrollo/app_lyrics/src/components/ConfirmDialogModal.tsx#L1-L116):**
+   - Ampliar `variant` a `'danger' | 'warning' | 'favorite'`, importar `Star` de `lucide-react` y renderizar estilo dorado sin `AlertTriangle` para `'favorite'`.
+4. **[`src/components/ReaderView.tsx`](file:///f:/Desarrollo/app_lyrics/src/components/ReaderView.tsx#L1-L125):**
+   - Importar `Star`; añadir `isFavorite?: boolean` y `onToggleFavorite?: () => void` en `ReaderViewProps`; renderizar botón `<Star />` en el grupo derecho de la barra superior (entre `Proyección` y `Editar`, líneas 102–124).
+5. **[`src/components/MusicianView.tsx`](file:///f:/Desarrollo/app_lyrics/src/components/MusicianView.tsx#L1-L158):**
+   - Importar `Star`; añadir `isFavorite?: boolean` y `onToggleFavorite?: () => void` en `MusicianViewProps`; renderizar botón `<Star />` en el grupo derecho de la barra superior (entre `Proyección` y `Editar`, líneas 135–157).
+6. **[`src/App.tsx`](file:///f:/Desarrollo/app_lyrics/src/App.tsx#L68-L870):**
+   - Importar `Star` de `lucide-react` y `ConfirmDialogModal`.
+   - Junto a `pendingSyncItems` (línea 241), añadir `favorites = useLiveQuery(() => db.favorites.toArray()) || []`, `favoriteIds`, `showFavoritesOnly` y `favoriteConfirmSong`.
+   - En el pipeline de filtrado (líneas 254–290), filtrar por `favoriteIds` cuando `showFavoritesOnly` esté activo.
+   - En la fila del índice alfabético (línea 606), mostrar el botón `<Star />` como primer elemento a la izquierda de `A`, seguido por las letras `A..Z`, y adaptar el estado vacío cuando `showFavoritesOnly` no tenga favoritas aún.
+   - En las tarjetas de canciones (línea 665), mostrar estrellita discreta si `favoriteIds.has(song.id)`.
+   - En `<MusicianView>` y `<ReaderView>` (alrededor de las líneas 825–855), pasar `isFavorite` y `onToggleFavorite`, y montar `<ConfirmDialogModal />` para confirmar agregar/quitar de favoritos.
+7. **[`tests/stabilization.test.ts`](file:///f:/Desarrollo/app_lyrics/tests/stabilization.test.ts#L750-L785):**
+   - Al final de la suite, añadir prueba `[UX9]` validando botón estrella en `ReaderView` y `MusicianView` y variante `'favorite'` (`Aceptar` / `Cancelar`) en `ConfirmDialogModal`.

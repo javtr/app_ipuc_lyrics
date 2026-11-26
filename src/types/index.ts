@@ -120,3 +120,8 @@ export interface PendingSyncOperation {
   override?: SedeSongOverride;
   createdAt: string;
 }
+
+export interface FavoriteSong {
+  songId: string;
+  addedAt: string;
+}

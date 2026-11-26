@@ -4,7 +4,8 @@ import {
   ArrowLeft,
   Type,
   Sparkles,
-  Edit3
+  Edit3,
+  Star
 } from 'lucide-react';
 import { DisplaySong } from '../types';
 import { getCleanLyrics } from '../services/chordParser';
@@ -15,6 +16,8 @@ import { SetlistNavControls, SetlistNavProps } from './SetlistNavControls';
 interface ReaderViewProps {
   song: DisplaySong;
   setlistNav?: SetlistNavProps;
+  isFavorite?: boolean;
+  onToggleFavorite?: () => void;
   onEnterProjection: () => void;
   onBackToCatalog?: () => void;
   onEditSong?: () => void;
@@ -34,6 +37,8 @@ const READER_FONT_CLASSES: Record<ReaderFontSize, string> = {
 export const ReaderView: React.FC<ReaderViewProps> = ({
   song,
   setlistNav,
+  isFavorite = false,
+  onToggleFavorite,
   onEnterProjection,
   onBackToCatalog,
   onEditSong,
@@ -98,8 +103,24 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           {setlistNav && <SetlistNavControls {...setlistNav} />}
         </div>
 
-        {/* Proyección y Edición */}
+        {/* Favorito, Proyección y Edición */}
         <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+          {onToggleFavorite && (
+            <button
+              type="button"
+              onClick={onToggleFavorite}
+              title={isFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+              aria-label={isFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+              className={`p-1.5 sm:p-2 rounded-xl border transition-colors ${
+                isFavorite
+                  ? 'bg-amber-950/60 border-amber-500/60 text-amber-400'
+                  : 'bg-slate-950 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-amber-300'
+              }`}
+            >
+              <Star className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isFavorite ? 'fill-amber-400 text-amber-400' : ''}`} />
+            </button>
+          )}
+
           {/* Proyector */}
           <button
             onClick={onEnterProjection}

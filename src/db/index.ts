@@ -4,7 +4,8 @@ import {
   SedeSongOverride,
   Setlist,
   CorrectionSuggestion,
-  PendingSyncOperation
+  PendingSyncOperation,
+  FavoriteSong
 } from '../types';
 import { SEED_SONGS, SEED_OVERRIDES } from '../data/seedSongs';
 
@@ -14,6 +15,7 @@ export class LyricsDatabase extends Dexie {
   setlists!: Table<Setlist, string>;
   suggestions!: Table<CorrectionSuggestion, string>;
   pendingSync!: Table<PendingSyncOperation, string>;
+  favorites!: Table<FavoriteSong, string>;
 
   constructor() {
     super('AppLyricsDB');
@@ -29,6 +31,14 @@ export class LyricsDatabase extends Dexie {
       setlists: 'id, name, date, sedeId',
       suggestions: 'id, songId, createdAt',
       pendingSync: 'id, targetSedeId, createdAt'
+    });
+    this.version(3).stores({
+      songs: 'id, title, originalKey, updatedAt',
+      overrides: 'id, baseSongId, sedeId, [baseSongId+sedeId]',
+      setlists: 'id, name, date, sedeId',
+      suggestions: 'id, songId, createdAt',
+      pendingSync: 'id, targetSedeId, createdAt',
+      favorites: 'songId, addedAt'
     });
   }
 }

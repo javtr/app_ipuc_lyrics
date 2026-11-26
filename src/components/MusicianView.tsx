@@ -7,7 +7,8 @@ import {
   ArrowLeft,
   Sun,
   Moon,
-  Type
+  Type,
+  Star
 } from 'lucide-react';
 import { DisplaySong } from '../types';
 import {
@@ -24,6 +25,8 @@ interface MusicianViewProps {
   song: DisplaySong;
   expectedKey?: string;
   setlistNav?: SetlistNavProps;
+  isFavorite?: boolean;
+  onToggleFavorite?: () => void;
   onEnterProjection: () => void;
   onBackToCatalog?: () => void;
   onEditFullSong?: () => void;
@@ -44,6 +47,8 @@ export const MusicianView: React.FC<MusicianViewProps> = ({
   song,
   expectedKey,
   setlistNav,
+  isFavorite = false,
+  onToggleFavorite,
   onEnterProjection,
   onBackToCatalog,
   onEditFullSong,
@@ -129,6 +134,23 @@ export const MusicianView: React.FC<MusicianViewProps> = ({
               }`}
             >
               {isWakeLockActive ? <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+            </button>
+          )}
+
+          {/* Botón de favoritos */}
+          {onToggleFavorite && (
+            <button
+              type="button"
+              onClick={onToggleFavorite}
+              title={isFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+              aria-label={isFavorite ? 'Quitar de favoritos' : 'Agregar a favoritos'}
+              className={`p-1.5 sm:p-2 rounded-xl border transition-colors ${
+                isFavorite
+                  ? 'bg-amber-950/60 border-amber-500/60 text-amber-400'
+                  : 'bg-slate-950 text-slate-300 border-slate-700 hover:text-amber-300'
+              }`}
+            >
+              <Star className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isFavorite ? 'fill-amber-400 text-amber-400' : ''}`} />
             </button>
           )}
 

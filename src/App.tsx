@@ -12,7 +12,8 @@ import {
   Church,
   X,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Star
 } from 'lucide-react';
 import { db, initializeDatabase } from './db';
 import { AdminSession, BaseSong, SedeProfile, SyncStatus } from './types';
@@ -53,6 +54,7 @@ import { SongEditorModal } from './components/SongEditorModal';
 import { ReaderView } from './components/ReaderView';
 import { BackupModal } from './components/BackupModal';
 import { AdminAuthModal } from './components/AdminAuthModal';
+import { ConfirmDialogModal } from './components/ConfirmDialogModal';
 
 const ACTIVE_SEDE_STORAGE_KEY = 'app_lyrics_active_sede';
 
@@ -74,6 +76,13 @@ export function App() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pendingJumpLetter, setPendingJumpLetter] = useState<string | null>(null);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState<boolean>(false);
+  const [favoriteConfirmSong, setFavoriteConfirmSong] = useState<{
+    id: string;
+    title: string;
+    isCurrentlyFavorite: boolean;
+  } | null>(null);
+  const [isSavingFavorite, setIsSavingFavorite] = useState<boolean>(false);
   const [correctionSong, setCorrectionSong] = useState<BaseSong | null>(null);
   const [importNotification, setImportNotification] = useState<string | null>(null);
   const [isSedeSelectorOpen, setIsSedeSelectorOpen] = useState<boolean>(false);
@@ -243,6 +252,8 @@ export function App() {
   const overrides = useLiveQuery(() => db.overrides.toArray()) || [];
   const setlists = useLiveQuery(() => db.setlists.toArray()) || [];
   const pendingSyncItems = useLiveQuery(() => db.pendingSync.toArray()) || [];
+  const favorites = useLiveQuery(() => db.favorites.toArray()) || [];
+  const favoriteIds = useMemo(() => new Set(favorites.map(f => f.songId)), [favorites]);
   const canEditGeneral = adminSession?.role === 'master';
 
   const currentSedeProfile = sedesList.find(s => s.id === activeSedeId) || {
@@ -250,21 +261,29 @@ export function App() {
     shortName: activeSedeId === 'general' ? 'General' : activeSedeId.replace(/^sede-/, '')
   };
 
-  // Pre-índice memoizado, filtrado instantáneo y paginación de 30 canciones por página
+  // Pre-índice memoizado, filtrado instantáneo (incl. Favoritas) y paginación de 30 canciones por página
   const indexedCatalog = useMemo(
     () => buildIndexedCatalog(songs, activeSedeId, overrides, currentSedeProfile.name),
     [songs, activeSedeId, overrides, currentSedeProfile.name]
   );
 
+  const baseCatalogPool = useMemo(
+    () =>
+      showFavoritesOnly
+        ? indexedCatalog.filter(item => favoriteIds.has(item.song.id))
+        : indexedCatalog,
+    [indexedCatalog, showFavoritesOnly, favoriteIds]
+  );
+
   const filteredCatalog = useMemo(
-    () => filterIndexedCatalog(indexedCatalog, deferredSearchQuery),
-    [indexedCatalog, deferredSearchQuery]
+    () => filterIndexedCatalog(baseCatalogPool, deferredSearchQuery),
+    [baseCatalogPool, deferredSearchQuery]
   );
 
   useEffect(() => {
     setCurrentPage(1);
     setPendingJumpLetter(null);
-  }, [deferredSearchQuery, activeSedeId]);
+  }, [deferredSearchQuery, activeSedeId, showFavoritesOnly]);
 
   const {
     pageItems,
@@ -602,12 +621,41 @@ export function App() {
                 )}
               </div>
 
-              {/* Índice Alfabético Rápido (salta directo a la página de la letra) */}
-              {firstPageByLetter.size > 1 && (
+              {/* Índice Alfabético Rápido con Acceso Directo a Favoritas a la izquierda de la A */}
+              {(indexedCatalog.length > 0 || showFavoritesOnly) && (
                 <div
                   aria-label="Índice alfabético de canciones"
                   className="flex items-center gap-1 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 >
+                  <button
+                    type="button"
+                    onClick={() => setShowFavoritesOnly(prev => !prev)}
+                    aria-pressed={showFavoritesOnly}
+                    aria-label={showFavoritesOnly ? 'Ver todas las canciones' : 'Ver canciones favoritas'}
+                    title={
+                      showFavoritesOnly
+                        ? 'Mostrando favoritas (toca para ver todas)'
+                        : `Ver favoritas (${favoriteIds.size})`
+                    }
+                    className={`w-6 h-6 rounded-lg shrink-0 flex items-center justify-center border transition-colors ${
+                      showFavoritesOnly
+                        ? 'bg-amber-400 text-slate-950 border-amber-300 shadow-sm'
+                        : favoriteIds.size > 0
+                          ? 'bg-slate-900 hover:bg-amber-950/60 text-amber-400 border-amber-700/50'
+                          : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-amber-300 border-slate-800'
+                    }`}
+                  >
+                    <Star
+                      className={`w-3.5 h-3.5 ${
+                        showFavoritesOnly
+                          ? 'fill-slate-950 text-slate-950'
+                          : favoriteIds.size > 0
+                            ? 'fill-amber-400 text-amber-400'
+                            : ''
+                      }`}
+                    />
+                  </button>
+
                   {indexLetters.map(letter => {
                     const hasSongs = firstPageByLetter.has(letter);
                     const isVisibleInCurrentPage = pageLetters.has(letter);
@@ -659,6 +707,7 @@ export function App() {
                       const hasLocalOverride = resolvedItem.isLocalOverride;
                       const isSedeExclusive = Boolean(song.sedeId && song.sedeId !== 'general');
                       const showSedeBadge = hasLocalOverride || isSedeExclusive;
+                      const isFav = favoriteIds.has(song.id);
                       const isSelected = activeBaseSong ? song.id === activeBaseSong.id : false;
 
                       return (
@@ -680,6 +729,12 @@ export function App() {
                         >
                           <div className="flex-1 min-w-0 pr-2">
                             <div className="flex items-center gap-1.5">
+                              {isFav && (
+                                <Star
+                                  aria-label="Favorita"
+                                  className="w-3.5 h-3.5 fill-amber-400 text-amber-400 shrink-0"
+                                />
+                              )}
                               <h4 className="text-sm font-semibold truncate">{song.title}</h4>
                               {showSedeBadge && (
                                 <span
@@ -715,8 +770,24 @@ export function App() {
                 ))}
 
                 {filteredCatalog.length === 0 && (
-                  <div className="py-8 text-center text-xs text-slate-500">
-                    No se encontraron canciones que coincidan.
+                  <div className="py-8 px-4 text-center text-xs text-slate-400 space-y-2.5">
+                    {showFavoritesOnly && !deferredSearchQuery.trim() ? (
+                      <>
+                        <Star className="w-6 h-6 text-amber-400/70 mx-auto" />
+                        <p className="leading-relaxed">
+                          Aún no tienes canciones favoritas guardadas en este dispositivo. Entra a cualquier canción y toca el ícono de estrella para guardarla.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setShowFavoritesOnly(false)}
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-300 font-semibold transition-colors"
+                        >
+                          Ver todas las canciones
+                        </button>
+                      </>
+                    ) : (
+                      <p className="text-slate-500">No se encontraron canciones que coincidan.</p>
+                    )}
                   </div>
                 )}
               </div>
@@ -829,6 +900,17 @@ export function App() {
                     song={activeDisplaySong}
                     expectedKey={selectedItemKey || undefined}
                     setlistNav={setlistNav}
+                    isFavorite={Boolean(activeBaseSong && favoriteIds.has(activeBaseSong.id))}
+                    onToggleFavorite={
+                      activeBaseSong
+                        ? () =>
+                            setFavoriteConfirmSong({
+                              id: activeBaseSong.id,
+                              title: activeDisplaySong.title,
+                              isCurrentlyFavorite: favoriteIds.has(activeBaseSong.id)
+                            })
+                        : undefined
+                    }
                     onEnterProjection={() => setIsProjectionMode(true)}
                     onBackToCatalog={() => {
                       setSetlistNavContext(null);
@@ -841,6 +923,17 @@ export function App() {
                   <ReaderView
                     song={activeDisplaySong}
                     setlistNav={setlistNav}
+                    isFavorite={Boolean(activeBaseSong && favoriteIds.has(activeBaseSong.id))}
+                    onToggleFavorite={
+                      activeBaseSong
+                        ? () =>
+                            setFavoriteConfirmSong({
+                              id: activeBaseSong.id,
+                              title: activeDisplaySong.title,
+                              isCurrentlyFavorite: favoriteIds.has(activeBaseSong.id)
+                            })
+                        : undefined
+                    }
                     onEnterProjection={() => setIsProjectionMode(true)}
                     onBackToCatalog={() => {
                       setSetlistNavContext(null);
@@ -992,6 +1085,39 @@ export function App() {
         }}
         onFlushPending={async () => {
           await runSync(activeSedeRef.current, true);
+        }}
+      />
+
+      {/* Confirmación local para agregar o quitar canción de Favoritos */}
+      <ConfirmDialogModal
+        isOpen={Boolean(favoriteConfirmSong)}
+        title={favoriteConfirmSong?.isCurrentlyFavorite ? 'Quitar de favoritos' : 'Agregar canción a favoritos'}
+        message={
+          favoriteConfirmSong?.isCurrentlyFavorite
+            ? `¿Quitar "${favoriteConfirmSong.title}" de tus canciones favoritas en este dispositivo?`
+            : `¿Agregar "${favoriteConfirmSong?.title || ''}" a tus canciones favoritas en este dispositivo?`
+        }
+        confirmLabel="Aceptar"
+        cancelLabel="Cancelar"
+        variant="favorite"
+        isProcessing={isSavingFavorite}
+        onCancel={() => setFavoriteConfirmSong(null)}
+        onConfirm={async () => {
+          if (!favoriteConfirmSong || isSavingFavorite) return;
+          setIsSavingFavorite(true);
+          try {
+            if (favoriteConfirmSong.isCurrentlyFavorite) {
+              await db.favorites.delete(favoriteConfirmSong.id);
+            } else {
+              await db.favorites.put({
+                songId: favoriteConfirmSong.id,
+                addedAt: new Date().toISOString()
+              });
+            }
+            setFavoriteConfirmSong(null);
+          } finally {
+            setIsSavingFavorite(false);
+          }
         }}
       />
     </div>

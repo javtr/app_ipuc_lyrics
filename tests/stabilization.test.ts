@@ -784,4 +784,52 @@ describe('Estabilización y Regresión: Validación + Nuevos Hallazgos + Correcc
     expect(projectionHtml).toContain('h-[100dvh]');
     expect(projectionHtml).not.toContain('title="Pantalla Completa"');
   });
+
+  it('[UX9-Favoritos] ReaderView, MusicianView y ConfirmDialogModal muestran estrella y diálogo de favoritos', () => {
+    const sampleDisplay = {
+      id: baseSong.id,
+      title: baseSong.title,
+      key: baseSong.originalKey,
+      sections: baseSong.sections,
+      isLocalOverride: false
+    };
+
+    const readerUnfav = renderToStaticMarkup(
+      React.createElement(ReaderView, {
+        song: sampleDisplay,
+        isFavorite: false,
+        onToggleFavorite: vi.fn(),
+        onEnterProjection: vi.fn()
+      })
+    );
+    expect(readerUnfav).toContain('aria-label="Agregar a favoritos"');
+    expect(readerUnfav).not.toContain('fill-amber-400');
+
+    const musicianFav = renderToStaticMarkup(
+      React.createElement(MusicianView, {
+        song: sampleDisplay,
+        isFavorite: true,
+        onToggleFavorite: vi.fn(),
+        onEnterProjection: vi.fn()
+      })
+    );
+    expect(musicianFav).toContain('aria-label="Quitar de favoritos"');
+    expect(musicianFav).toContain('fill-amber-400');
+
+    const favDialogHtml = renderToStaticMarkup(
+      React.createElement(ConfirmDialogModal, {
+        isOpen: true,
+        title: 'Agregar canción a favoritos',
+        message: '¿Agregar "Sublime Gracia" a tus canciones favoritas en este dispositivo?',
+        confirmLabel: 'Aceptar',
+        cancelLabel: 'Cancelar',
+        variant: 'favorite',
+        onCancel: vi.fn(),
+        onConfirm: vi.fn()
+      })
+    );
+    expect(favDialogHtml).toContain('Agregar canción a favoritos');
+    expect(favDialogHtml).toContain('Aceptar');
+    expect(favDialogHtml).toContain('Cancelar');
+  });
 });
