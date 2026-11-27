@@ -45,12 +45,39 @@
   },
   {
     "id": "la-bondad-de-dios_sede-palestina",
-    "localNotes": "Subir intensidad desde el puente. Piano guía los 4 primeros compases.",
+    "baseSongId": "la-bondad-de-dios",
+    "sedeId": "sede-palestina",
     "customTitle": "La Bondad de Dios (Palestina)",
     "customKey": "G",
-    "sedeId": "sede-palestina",
-    "baseSongId": "la-bondad-de-dios",
-    "updatedAt": "2026-11-11T12:00:00.000Z"
+    "customSections": [
+      {
+        "id": "sec_1_verse",
+        "type": "verse",
+        "label": "Verso 1",
+        "lines": [
+          "Te [G]amo Dios, Tu gracia nunca [C]falla",
+          "Todos mis [G]días en Tus manos [D]están",
+          "Desde el [Em]momento en que des[C]pierto",
+          "Hasta el [G]anoche[D]cer[Em]",
+          "Canta[C]ré de la [D]bondad de [G]Dios"
+        ]
+      },
+      {
+        "id": "sec_2_chorus",
+        "type": "chorus",
+        "label": "Coro",
+        "lines": [
+          "En mi [C]vida has sido bueno",
+          "En mi [G]vida has sido tan, tan [D]fiel",
+          "Con cada a[C]liento que me das",
+          "Canta[G]ré de la [D]bondad de [Em]Dios",
+          "Canta[C]ré de la [D]bondad de [G]Dios"
+        ]
+      }
+    ],
+    "localNotes": "Subir intensidad desde el puente. Piano guía los 4 primeros compases.",
+    "updatedAt": "2026-11-27T22:02:22.542Z",
+    "syncSource": "remote"
   },
   {
     "id": "cuan-grande-es-el_sede-palestina",
