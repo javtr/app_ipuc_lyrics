@@ -73,10 +73,23 @@
           "Canta[G]ré de la [D]bondad de [Em]Dios",
           "Canta[C]ré de la [D]bondad de [G]Dios"
         ]
+      },
+      {
+        "id": "sec_3_verse",
+        "type": "verse",
+        "label": "Verso 2",
+        "lines": [
+          "Yo amor tú voz",
+          "Me has guiado por el fuego",
+          "Tu cerca estás en la oscuridad",
+          "Te conozco como Padre",
+          "Y como amigo fiel",
+          "Mi vida está en la bondad de Dios"
+        ]
       }
     ],
     "localNotes": "Subir intensidad desde el puente. Piano guía los 4 primeros compases.",
-    "updatedAt": "2026-11-27T22:02:48.039Z",
+    "updatedAt": "2026-11-27T22:04:21.970Z",
     "syncSource": "remote"
   },
   {
